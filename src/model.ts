@@ -365,7 +365,9 @@ export async function loadWorld(url: string, bdtopoUrl?: string): Promise<World>
     const rings = allRings[bi];
     const bd = bdMatch[bi];
     // BD TOPO surveyed heights beat our guesses; OSM-tagged heights win over both.
-    if (b.h == null && bd && bd[2] > 2) b = { ...b, h: bd[2] };
+    // For a church BD TOPO gives the spire's height, far above the nave the
+    // footprint mostly is, so cap it there.
+    if (b.h == null && bd && bd[2] > 2) b = { ...b, h: CHURCH_KINDS.has(b.i?.building ?? "") ? Math.min(bd[2], 28) : bd[2] };
     const o = rings[0];
     let cx = 0, cy = 0;
     for (let i = 0; i < o.length; i += 2) { cx += o[i]; cy += o[i + 1]; }

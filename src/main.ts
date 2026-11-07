@@ -159,8 +159,11 @@ function present() {
   }
 
   const c = { ...cam, zoom: z };
-  if (state.hover != null && state.hover !== state.selected) drawHighlight(ctx, view(), c, state.hover, theme.hover, 0.4);
-  if (state.selected != null) drawHighlight(ctx, view(), c, state.selected, theme.selected, 0.75);
+  // Over the painting, the map data's block rarely matches the painted
+  // building, so tint it instead of covering it.
+  const blend = painted && showPainted ? "soft-light" : "source-over";
+  if (state.hover != null && state.hover !== state.selected) drawHighlight(ctx, view(), c, state.hover, theme.hover, painted && showPainted ? 0.35 : 0.4, blend);
+  if (state.selected != null) drawHighlight(ctx, view(), c, state.selected, theme.selected, painted && showPainted ? 0.6 : 0.75, blend);
   drawLabels();
 }
 
@@ -321,6 +324,7 @@ if (import.meta.env.DEV) {
     cam.zoom = clampZoom(zoom);
     requestRender();
   };
+  (window as unknown as { __select: unknown }).__select = (name: string) => showInfo(world.buildings.findIndex((b) => b.info?.name === name));
 }
 
 function setTheme(t: Theme) {

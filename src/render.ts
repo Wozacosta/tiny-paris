@@ -514,12 +514,25 @@ export function drawHighlight(
   pal: Palette,
   /** Tint strength; hover stays light so the building is still recognisable. */
   alpha = 1,
+  /** How the tint mixes with the frame: over the painting, a blend keeps its detail. */
+  blend: GlobalCompositeOperation = "source-over",
 ) {
   const it = view.byBuilding.get(idx);
   if (!it) return;
   const { width: cw, height: ch } = ctx.canvas;
   ctx.globalAlpha = alpha;
+  ctx.globalCompositeOperation = blend;
   ctx.setTransform(cam.zoom, 0, 0, cam.zoom, cw / 2 - cam.cx * cam.zoom, ch / 2 - cam.cy * cam.zoom);
+  if (blend !== "source-over") {
+    // One even tint: blended faces filled one by one show their seams.
+    const all = new Path2D();
+    for (const p of [it.stoneA, it.stoneB, it.mansA, it.mansB, it.roof]) if (p) all.addPath(p);
+    ctx.fillStyle = pal.roof;
+    ctx.fill(all);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = "source-over";
+    return;
+  }
   ctx.fillStyle = pal.wallA;
   ctx.fill(it.stoneA);
   if (it.mansA) ctx.fill(it.mansA);
@@ -529,6 +542,7 @@ export function drawHighlight(
   ctx.fillStyle = pal.roof;
   ctx.fill(it.roof, "evenodd");
   ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = "source-over";
 }
 
 /** Topmost building under an iso-space point, or null. */

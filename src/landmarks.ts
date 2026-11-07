@@ -22,8 +22,8 @@ export const LANDMARKS: Landmark[] = [
   { name: "Palais Brongniart", note: "2e", lon: 2.3412, lat: 48.869, zoom: 3.2 },
   { name: "Opéra Garnier", note: "9e", lon: 2.3316, lat: 48.872, zoom: 2.8 },
   { name: "Galeries Lafayette", note: "9e", lon: 2.3322, lat: 48.8737, zoom: 3 },
-  { name: "Porte Saint-Denis", note: "10e", lon: 2.3534, lat: 48.8701, zoom: 3.6 },
-  { name: "Porte Saint-Martin", note: "10e", lon: 2.3577, lat: 48.8691, zoom: 3.6 },
+  { name: "Porte Saint-Denis", note: "10e", lon: 2.3527, lat: 48.8698, zoom: 3.6 },
+  { name: "Porte Saint-Martin", note: "10e", lon: 2.3557, lat: 48.8692, zoom: 3.6 },
   // Montmartre and the stations.
   { name: "Moulin Rouge", note: "Pigalle", lon: 2.3323, lat: 48.8841, zoom: 3.6 },
   { name: "Sacré-Cœur", note: "18e", lon: 2.3431, lat: 48.8867, zoom: 2.8, z: 30, top: 90 },
