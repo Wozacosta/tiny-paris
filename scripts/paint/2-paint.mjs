@@ -85,6 +85,8 @@ Keep each building's architectural style and colour from this image; the colours
 - Red-brown buildings are brick (1900s–1930s HBM housing and workshops): red brick façades with lighter stone bands, keep them brick.
 - Terracotta roofs stay terracotta tiles; dark grey roofs stay slate.
 - Roofs and the ground are textured with real aerial photos: keep what they show, at the same places, painted cleanly in the illustration style — zinc and slate roofs, terracotta tiles, chimney stacks, skylights and glass courtyard roofs, rooftop terraces and gardens, solar panels, trees and gardens in courtyards, school yards and sports courts, parked cars. Make each roof as varied as the photo is. Ignore the photo's own shadows and blur.
+- Roof shapes (slopes, ridges, towers, spires, domes) are measured: keep each one's exact silhouette.
+- Paint it all as a clean, bright illustration: crisp edges, fresh natural colours, clear afternoon light; no photographic grime, noise or dark blotches.
 - Streets: dark asphalt with light stone pavements and crossings; small cars stay small.
 - Trees and parks: lush rounded canopies with soft light and shadow; canal water calm blue-green.
 - Lighting: soft afternoon sun from the left, gentle ambient occlusion where walls meet the ground, crisp edges.

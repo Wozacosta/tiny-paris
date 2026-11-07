@@ -317,6 +317,12 @@ function viewRect(ctx: CanvasRenderingContext2D, cam: Camera) {
 /** Draws an aerial photo in world metres onto whatever transform the context has. */
 export type Photo = (ctx: CanvasRenderingContext2D) => void;
 
+/**
+ * Draws what rises above a building's walls (roof slopes, towers, spires) from
+ * measured heights, in canvas pixels, when it's that building's turn.
+ */
+export type RoofShape = (ctx: CanvasRenderingContext2D, idx: number, z: number, ox: number, oy: number, walls: [string, string]) => void;
+
 /** Context transform taking world metres to canvas pixels at height `h`. */
 function groundTransform(ctx: CanvasRenderingContext2D, r: Rotation, z: number, ox: number, oy: number, h = 0) {
   const [a, b, c, d] = ROT[r];
@@ -352,7 +358,18 @@ export function drawGround(ctx: CanvasRenderingContext2D, world: World, view: Ro
   ctx.fill(g.cemeteries);
   // The real ground (courtyards, terraces, sports courts, street furniture),
   // with water kept in its map colour and streets only hinted over it.
-  photo?.(ctx);
+  if (photo) {
+    // Lightly faded, so street-level shadows and grime don't dominate.
+    ctx.globalAlpha = 0.8;
+    photo(ctx);
+    // Parks keep a green tint, or a planted strip can read as water.
+    ctx.globalAlpha = 0.35;
+    ctx.fillStyle = theme.park;
+    ctx.fill(g.parks);
+    ctx.fillStyle = theme.pitch;
+    ctx.fill(g.pitches);
+    ctx.globalAlpha = 1;
+  }
   ctx.fillStyle = theme.water;
   ctx.fill(g.water, "evenodd");
   ctx.lineCap = "round";
@@ -417,7 +434,9 @@ export function occluders(ctx: CanvasRenderingContext2D, world: World, view: Rot
   return out;
 }
 
-export function drawStructures(ctx: CanvasRenderingContext2D, world: World, view: RotView, cam: Camera, theme: Theme, res: number, photo?: Photo) {
+export function drawStructures(
+  ctx: CanvasRenderingContext2D, world: World, view: RotView, cam: Camera, theme: Theme, res: number, photo?: Photo, roofShape?: RoofShape,
+) {
   const { width: cw, height: ch } = ctx.canvas;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, cw, ch);
@@ -472,6 +491,11 @@ export function drawStructures(ctx: CanvasRenderingContext2D, world: World, view
         ctx.restore();
       }
       if (showEdges) ctx.stroke(it.roof);
+      if (roofShape) {
+        ctx.save();
+        roofShape(ctx, it.idx, z, ox, oy, [pal.wallA, pal.wallB]);
+        ctx.restore();
+      }
       if (bld.domes.length) drawDomes(ctx, view.rotation, bld, bld.white ? theme.white : pal);
     } else {
       ctx.fillStyle = theme.tree;
