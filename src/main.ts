@@ -1,6 +1,6 @@
 import { loadTransit, loadWorld, type Building, type World } from "./model";
 import { LANDMARKS } from "./landmarks";
-import { buildRotView, drawGround, drawHighlight, drawStructures, pick, worldToIso, type Camera, type Rotation, type RotView } from "./render";
+import { buildRotView, drawGround, drawHighlight, drawStructures, occluders, pick, worldToIso, type Camera, type Rotation, type RotView } from "./render";
 import { DAY, NIGHT, type Theme } from "./theme";
 import { Traffic } from "./traffic";
 import { Sprites } from "./sprites";
@@ -32,6 +32,8 @@ const cam: Camera = { cx: 0, cy: 0, zoom: 1 };
 const state = { hover: null as number | null, selected: null as number | null };
 let minZoom = 0.1;
 const MAX_ZOOM = 14;
+/** Zoom from which movers are occluded building by building, in depth order. */
+const OCCLUDE_ZOOM = 2;
 
 const view = () => (views[rotation] ??= buildRotView(world, rotation));
 let traffic: Traffic;
@@ -136,10 +138,18 @@ function present() {
   const ox = canvas.width / 2 - cam.cx * z, oy = canvas.height / 2 - cam.cy * z;
   moversCtx.setTransform(z, 0, 0, z, ox, oy);
   const hw = canvas.width / 2 / z, hh = canvas.height / 2 / z;
-  traffic.draw(moversCtx, rotation, [cam.cx - hw, cam.cy - hh, cam.cx + hw, cam.cy + hh], theme, cam.zoom);
-  moversCtx.globalCompositeOperation = "destination-out";
-  blit(moversCtx, buildSnap);
-  moversCtx.globalCompositeOperation = "source-over";
+  const rect: [number, number, number, number] = [cam.cx - hw, cam.cy - hh, cam.cx + hw, cam.cy + hh];
+  if (cam.zoom >= OCCLUDE_ZOOM) {
+    // Close up, buildings and trees are sorted in with the movers, so each
+    // hides only what is behind it.
+    traffic.draw(moversCtx, rotation, rect, theme, cam.zoom, null, occluders(moversCtx, world, view(), rect, 0.6));
+  } else {
+    // From afar a single cut by the whole building layer is close enough, and cheap.
+    traffic.draw(moversCtx, rotation, rect, theme, cam.zoom);
+    moversCtx.globalCompositeOperation = "destination-out";
+    blit(moversCtx, buildSnap);
+    moversCtx.globalCompositeOperation = "source-over";
+  }
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.drawImage(movers, 0, 0);
   // The followed vehicle stays visible even behind buildings.

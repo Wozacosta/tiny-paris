@@ -297,7 +297,10 @@ export class Traffic {
    * Draws the viaduct, stations and every vehicle inside the iso-space view
    * rectangle. `ctx` must already carry the camera transform for iso units.
    */
-  draw(ctx: CanvasRenderingContext2D, r: Rotation, view: [number, number, number, number], theme: Theme, cssZoom: number, only: number | null = null) {
+  draw(
+    ctx: CanvasRenderingContext2D, r: Rotation, view: [number, number, number, number], theme: Theme, cssZoom: number,
+    only: number | null = null, occluders: { depth: number; draw: () => void }[] = [],
+  ) {
     const [x0, y0, x1, y1] = view;
     const inView = (x: number, y: number, z: number, pad: number) => {
       const [sx, sy] = worldToIso(r, x, y, z);
@@ -367,6 +370,7 @@ export class Traffic {
     }
 
     if (only == null) this.life.collect(items, ctx, r, inView, theme, cssZoom);
+    items.push(...occluders);
     items.sort((a, b) => a.depth - b.depth);
     for (const it of items) it.draw();
   }

@@ -369,6 +369,41 @@ export function drawGround(ctx: CanvasRenderingContext2D, world: World, view: Ro
 }
 
 /** Building layer: buildings, trees and monuments, back to front, on a transparent canvas. */
+/**
+ * Buildings and trees in the iso-space rectangle as depth-sorted erasers: each
+ * one, drawn in turn with the movers, cuts away whatever is behind it but not
+ * what is in front. Outlines are widened by `grow` iso units so painted
+ * buildings a little bigger than their footprint still hide what's behind.
+ */
+export function occluders(ctx: CanvasRenderingContext2D, world: World, view: RotView, rect: BBox, grow: number) {
+  const [vx0, vy0, vx1, vy1] = rect;
+  const out: { depth: number; draw: () => void }[] = [];
+  const erase = (fill: (Path2D | null)[], edge: Path2D) => {
+    ctx.globalCompositeOperation = "destination-out";
+    ctx.fillStyle = "#000";
+    for (const p of fill) if (p) ctx.fill(p);
+    if (grow > 0) {
+      ctx.lineWidth = grow * 2;
+      ctx.lineJoin = "round";
+      ctx.strokeStyle = "#000";
+      ctx.stroke(edge);
+    }
+    ctx.globalCompositeOperation = "source-over";
+  };
+  for (const it of view.items) {
+    const [x0, y0, x1, y1] = it.bbox;
+    if (x1 < vx0 || x0 > vx1 || y1 < vy0 || y0 > vy1) continue;
+    if (it.kind === "b") {
+      const b = world.buildings[it.idx];
+      out.push({ depth: depthOf(view.rotation, b.cx, b.cy), draw: () => erase([it.stoneA, it.stoneB, it.mansA, it.mansB, it.roof], it.roof) });
+    } else {
+      // A band of trees: its ground line is the bottom of the box (depth = 2 × screen y).
+      out.push({ depth: 2 * y1 - DEPTH_BAND / 2, draw: () => erase([it.canopy], it.canopy) });
+    }
+  }
+  return out;
+}
+
 export function drawStructures(ctx: CanvasRenderingContext2D, world: World, view: RotView, cam: Camera, theme: Theme, res: number) {
   const { width: cw, height: ch } = ctx.canvas;
   ctx.setTransform(1, 0, 0, 1, 0, 0);

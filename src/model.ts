@@ -132,6 +132,8 @@ const HEIGHT_OVERRIDES: Record<string, number> = {
   "Rotonde de la Villette": 16,
   "Philharmonie de Paris": 52,
   "Église Saint-Vincent-de-Paul": 36,
+  // The painting draws the whole mill with its sails over this little base.
+  "Moulin de la Galette": 14,
 };
 
 /** Sun from the south-west: shadow offset in metres per metre of height. */
@@ -145,6 +147,15 @@ export const BIKE_ROADS = new Set(["cycleway", "secondary", "tertiary", "unclass
 export const TRUCK_ROADS = new Set(["residential", "living_street", "unclassified", "tertiary"]);
 const WALKS = new Set(["footway", "pedestrian", "path", "living_street"]);
 const MAJOR = new Set(["motorway", "trunk", "primary", "secondary", "tertiary"]);
+
+function pointInRing(x: number, y: number, r: Float64Array) {
+  let inside = false;
+  for (let i = 0, j = r.length - 2; i < r.length; j = i, i += 2) {
+    const xi = r[i], yi = r[i + 1], xj = r[j], yj = r[j + 1];
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
 
 export function makeLane(flat: Float64Array, half: number, major: boolean, kind: string, zs?: Float64Array): Lane {
   const n = flat.length / 2;
@@ -407,11 +418,45 @@ export async function loadWorld(url: string, bdtopoUrl?: string): Promise<World>
   const shadows = new Path2D();
   for (const b of buildings) addShadow(shadows, b.rings[0], SUN[0] * b.h, SUN[1] * b.h);
 
+  // Footpaths and service roads mapped through passages and courtyards would
+  // put people and cars on top of the painted roofs: drop any whose middle is
+  // inside a building.
+  const CELL = 50;
+  const cells = new Map<string, number[]>();
+  buildings.forEach((b, i) => {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    const r0 = b.rings[0];
+    for (let j = 0; j < r0.length; j += 2) {
+      x0 = Math.min(x0, r0[j]); x1 = Math.max(x1, r0[j]); y0 = Math.min(y0, r0[j + 1]); y1 = Math.max(y1, r0[j + 1]);
+    }
+    for (let gx = Math.floor(x0 / CELL); gx <= Math.floor(x1 / CELL); gx++) {
+      for (let gy = Math.floor(y0 / CELL); gy <= Math.floor(y1 / CELL); gy++) {
+        const key = `${gx},${gy}`;
+        const list = cells.get(key);
+        if (list) list.push(i);
+        else cells.set(key, [i]);
+      }
+    }
+  });
+  const indoors = (x: number, y: number) =>
+    (cells.get(`${Math.floor(x / CELL)},${Math.floor(y / CELL)}`) ?? []).some((i) => pointInRing(x, y, buildings[i].rings[0]));
+  const throughBuilding = (flat: Float64Array) => {
+    const lane = makeLane(flat, 0, false, "");
+    return [0.25, 0.5, 0.75].some((f) => {
+      let i = 1;
+      while (i < lane.cum.length - 1 && lane.cum[i] < lane.len * f) i++;
+      const t = (lane.len * f - lane.cum[i - 1]) / (lane.cum[i] - lane.cum[i - 1] || 1);
+      return indoors(flat[i * 2 - 2] + (flat[i * 2] - flat[i * 2 - 2]) * t, flat[i * 2 - 1] + (flat[i * 2 + 1] - flat[i * 2 - 1]) * t);
+    });
+  };
+
   const streets: Lane[] = [];
   const junctions = new Map<string, number[]>();
   for (const r of raw.roads) {
     if (!STREETS.has(r.k)) continue;
-    const lane = makeLane(Float64Array.from(r.p, (v) => v / k), r.w / 2, MAJOR.has(r.k), r.k);
+    const flat = Float64Array.from(r.p, (v) => v / k);
+    if (r.k === "service" && throughBuilding(flat)) continue;
+    const lane = makeLane(flat, r.w / 2, MAJOR.has(r.k), r.k);
     if (lane.len < 1) continue;
     const id = streets.push(lane) - 1;
     for (const e of [lane.a, lane.b]) junctions.set(e, [...(junctions.get(e) ?? []), id]);
@@ -422,7 +467,9 @@ export async function loadWorld(url: string, bdtopoUrl?: string): Promise<World>
   for (const r of raw.roads) {
     const walk = WALKS.has(r.k);
     if (!walk && r.k !== "rail") continue;
-    const lane = makeLane(Float64Array.from(r.p, (v) => v / k), r.w / 2, false, r.k);
+    const flat = Float64Array.from(r.p, (v) => v / k);
+    if (walk && throughBuilding(flat)) continue;
+    const lane = makeLane(flat, r.w / 2, false, r.k);
     if (lane.len < 2) continue;
     if (!walk) {
       rails.push(lane);
