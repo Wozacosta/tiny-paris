@@ -38,6 +38,7 @@ const { values: opt } = parseArgs({
     // current painting (from --from) with the base, and asks for those fixes only.
     fix: { type: "string" },
     from: { type: "string", default: `${DIR}/painted` },
+    base: { type: "string", default: `${DIR}/base` }, // the renders to paint from
   },
 });
 
@@ -83,6 +84,7 @@ Keep each building's architectural style and colour from this image; the colours
 - White and light-grey buildings with horizontal window bands and flat roofs are 1950s–1980s concrete social housing towers and slabs (HLM): paint them as plain concrete with repetitive ribbon windows and loggias, flat gravel roofs with rooftop vents and lift housings. Never give them mansards, dormers, balconies with ironwork or Haussmann details.
 - Red-brown buildings are brick (1900s–1930s HBM housing and workshops): red brick façades with lighter stone bands, keep them brick.
 - Terracotta roofs stay terracotta tiles; dark grey roofs stay slate.
+- Roofs and the ground are textured with real aerial photos: keep what they show, at the same places, painted cleanly in the illustration style — zinc and slate roofs, terracotta tiles, chimney stacks, skylights and glass courtyard roofs, rooftop terraces and gardens, solar panels, trees and gardens in courtyards, school yards and sports courts, parked cars. Make each roof as varied as the photo is. Ignore the photo's own shadows and blur.
 - Streets: dark asphalt with light stone pavements and crossings; small cars stay small.
 - Trees and parks: lush rounded canopies with soft light and shadow; canal water calm blue-green.
 - Lighting: soft afternoon sun from the left, gentle ambient occlusion where walls meet the ground, crisp edges.
@@ -109,7 +111,7 @@ await mkdir(opt.out, { recursive: true });
 async function paint(id) {
   const out = `${opt.out}/${id}.png`;
   if (existsSync(out)) return "skip";
-  const img = (await readFile(`${DIR}/base/${id}.png`)).toString("base64");
+  const img = (await readFile(`${opt.base}/${id}.png`)).toString("base64");
   const [c, r] = id.split("_").map(Number);
   const marks = landmarksInTile(base, c, r);
   const near = landmarksNearTile(base, c, r);

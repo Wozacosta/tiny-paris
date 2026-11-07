@@ -314,7 +314,16 @@ function viewRect(ctx: CanvasRenderingContext2D, cam: Camera) {
 }
 
 /** Ground layer: base slab, parks, water, streets and cast shadows. */
-export function drawGround(ctx: CanvasRenderingContext2D, world: World, view: RotView, cam: Camera, theme: Theme, res: number) {
+/** Draws an aerial photo in world metres onto whatever transform the context has. */
+export type Photo = (ctx: CanvasRenderingContext2D) => void;
+
+/** Context transform taking world metres to canvas pixels at height `h`. */
+function groundTransform(ctx: CanvasRenderingContext2D, r: Rotation, z: number, ox: number, oy: number, h = 0) {
+  const [a, b, c, d] = ROT[r];
+  ctx.setTransform((a - c) * z, ((a + c) / 2) * z, (b - d) * z, ((b + d) / 2) * z, ox, oy - h * Z * z);
+}
+
+export function drawGround(ctx: CanvasRenderingContext2D, world: World, view: RotView, cam: Camera, theme: Theme, res: number, photo?: Photo) {
   const { width: cw, height: ch } = ctx.canvas;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, cw, ch);
@@ -329,8 +338,7 @@ export function drawGround(ctx: CanvasRenderingContext2D, world: World, view: Ro
   ctx.fill(view.slabSides.right);
 
   // The ground plane is world metres straight through an affine transform.
-  const [a, b, c, d] = ROT[view.rotation];
-  ctx.setTransform((a - c) * z, ((a + c) / 2) * z, (b - d) * z, ((b + d) / 2) * z, ox, oy);
+  groundTransform(ctx, view.rotation, z, ox, oy);
   const g = world.ground;
   ctx.fillStyle = theme.ground;
   ctx.fill(g.slab);
@@ -342,11 +350,15 @@ export function drawGround(ctx: CanvasRenderingContext2D, world: World, view: Ro
   ctx.fill(g.pitches);
   ctx.fillStyle = theme.cemetery;
   ctx.fill(g.cemeteries);
+  // The real ground (courtyards, terraces, sports courts, street furniture),
+  // with water kept in its map colour and streets only hinted over it.
+  photo?.(ctx);
   ctx.fillStyle = theme.water;
   ctx.fill(g.water, "evenodd");
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
-  if (cssZoom >= 0.7) {
+  if (photo) ctx.globalAlpha = 0.3;
+  if (cssZoom >= 0.7 && !photo) {
     ctx.strokeStyle = theme.sidewalk;
     for (const r of world.roads) {
       if (r.color !== "road") continue;
@@ -359,6 +371,7 @@ export function drawGround(ctx: CanvasRenderingContext2D, world: World, view: Ro
     ctx.lineWidth = r.width;
     ctx.stroke(r.path);
   }
+  ctx.globalAlpha = 1;
   ctx.fillStyle = theme.bridge;
   ctx.fill(g.bridges);
   ctx.fillStyle = theme.shadow;
@@ -404,7 +417,7 @@ export function occluders(ctx: CanvasRenderingContext2D, world: World, view: Rot
   return out;
 }
 
-export function drawStructures(ctx: CanvasRenderingContext2D, world: World, view: RotView, cam: Camera, theme: Theme, res: number) {
+export function drawStructures(ctx: CanvasRenderingContext2D, world: World, view: RotView, cam: Camera, theme: Theme, res: number, photo?: Photo) {
   const { width: cw, height: ch } = ctx.canvas;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, cw, ch);
@@ -450,6 +463,14 @@ export function drawStructures(ctx: CanvasRenderingContext2D, world: World, view
       }
       ctx.fillStyle = pal.roof;
       ctx.fill(it.roof, "evenodd");
+      if (photo) {
+        // The roof as photographed from above, lifted to the building's height.
+        ctx.save();
+        ctx.clip(it.roof, "evenodd");
+        groundTransform(ctx, view.rotation, z, ox, oy, bld.h);
+        photo(ctx);
+        ctx.restore();
+      }
       if (showEdges) ctx.stroke(it.roof);
       if (bld.domes.length) drawDomes(ctx, view.rotation, bld, bld.white ? theme.white : pal);
     } else {
