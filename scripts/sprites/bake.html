@@ -1,0 +1,444 @@
+<!doctype html>
+<meta charset="utf-8" />
+<script type="module">
+// Renders 3D models into sprite sheets seen through the map's own isometric
+// projection (sx = x − y, sy = (x + y)/2 − 1.15·z), one cell per heading and
+// animation frame. Driven by bake.mjs through window.bake().
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
+import * as SkeletonUtils from "three/addons/utils/SkeletonUtils.js";
+
+const Z = 1.15;
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.setClearColor(0x000000, 0);
+const loader = new GLTFLoader();
+const cache = new Map();
+const load = async (name) => {
+  if (!cache.has(name)) cache.set(name, await loader.loadAsync(`/scripts/sprites/models/${name}.glb`));
+  return cache.get(name);
+};
+
+function lights(scene) {
+  scene.add(new THREE.HemisphereLight(0xf4f1ea, 0x6f6a60, 1.6));
+  const sun = new THREE.DirectionalLight(0xfff3e0, 2.2);
+  // Afternoon sun from the left of the view, as on the map.
+  sun.position.set(-3, 6, 2);
+  scene.add(sun);
+}
+
+/** Orthographic camera whose projection is the map's iso projection, for one cell. */
+function isoCamera(P, cellW, cellH, anchorY, R) {
+  const cam = new THREE.Camera();
+  const hw = cellW / 2, hh = cellH / 2, offY = hh - anchorY;
+  // Three's world: X east, Y up, Z south (the map's y).
+  cam.projectionMatrix.set(
+    P / hw, 0, -P / hw, 0,
+    -P / (2 * hh), (Z * P) / hh, -P / (2 * hh), offY / hh,
+    -1 / R, -0.87 / R, -1 / R, 0,
+    0, 0, 0, 1,
+  );
+  cam.projectionMatrixInverse.copy(cam.projectionMatrix).invert();
+  return cam;
+}
+
+const hexRGB = (h) => {
+  const n = parseInt(h.slice(1), 16);
+  return { r: ((n >> 16) & 255) / 255, g: ((n >> 8) & 255) / 255, b: (n & 255) / 255 };
+};
+
+/** Replaces texture colours near `from` with `to` (palette textures from Kenney). */
+function recolor(texture, swaps) {
+  const img = texture.image;
+  const c = document.createElement("canvas");
+  c.width = img.width; c.height = img.height;
+  const g = c.getContext("2d");
+  g.drawImage(img, 0, 0);
+  const d = g.getImageData(0, 0, c.width, c.height);
+  for (let i = 0; i < d.data.length; i += 4) {
+    for (const [from, to] of swaps) {
+      // Texture pixels are sRGB; THREE.Color would convert to linear.
+      const f = hexRGB(from), t = hexRGB(to);
+      const dr = d.data[i] / 255 - f.r, dg = d.data[i + 1] / 255 - f.g, db = d.data[i + 2] / 255 - f.b;
+      if (dr * dr + dg * dg + db * db < 0.02) {
+        // Keep the original's shading relative to the swatch.
+        d.data[i] = Math.min(255, (t.r + dr) * 255);
+        d.data[i + 1] = Math.min(255, (t.g + dg) * 255);
+        d.data[i + 2] = Math.min(255, (t.b + db) * 255);
+        break;
+      }
+    }
+  }
+  g.putImageData(d, 0, 0);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.flipY = texture.flipY;
+  tex.magFilter = texture.magFilter;
+  tex.minFilter = texture.minFilter;
+  return tex;
+}
+
+/** Most common colours in the body mesh's texture, for picking what to recolour. */
+function dominantColours(mesh, n = 4) {
+  const map = mesh.material.map, img = map.image;
+  const c = document.createElement("canvas");
+  c.width = img.width; c.height = img.height;
+  const g = c.getContext("2d");
+  g.drawImage(img, 0, 0);
+  const d = g.getImageData(0, 0, c.width, c.height).data;
+  const uv = mesh.geometry.attributes.uv, idx = mesh.geometry.index;
+  const counts = new Map();
+  const tri = idx ? idx.count / 3 : uv.count / 3;
+  const pos = mesh.geometry.attributes.position;
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), cc = new THREE.Vector3();
+  for (let t = 0; t < tri; t++) {
+    const i0 = idx ? idx.getX(t * 3) : t * 3, i1 = idx ? idx.getX(t * 3 + 1) : t * 3 + 1, i2 = idx ? idx.getX(t * 3 + 2) : t * 3 + 2;
+    a.fromBufferAttribute(pos, i0); b.fromBufferAttribute(pos, i1); cc.fromBufferAttribute(pos, i2);
+    const area = b.sub(a).cross(cc.sub(a)).length();
+    const u = (uv.getX(i0) + uv.getX(i1) + uv.getX(i2)) / 3, v = (uv.getY(i0) + uv.getY(i1) + uv.getY(i2)) / 3;
+    const px = Math.min(img.width - 1, Math.max(0, Math.floor(u * img.width)));
+    const py = Math.min(img.height - 1, Math.max(0, Math.floor((map.flipY ? 1 - v : v) * img.height)));
+    const k = (py * img.width + px) * 4;
+    const hex = "#" + [d[k], d[k + 1], d[k + 2]].map((x) => x.toString(16).padStart(2, "0")).join("");
+    counts.set(hex, (counts.get(hex) ?? 0) + area);
+  }
+  return [...counts.entries()].sort((p, q) => q[1] - p[1]).slice(0, n).map(([h]) => h);
+}
+
+// ---- procedural models -------------------------------------------------------
+
+const mat = (color, opts = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.6, metalness: 0.1, ...opts });
+
+function canvasTex(w, h, draw) {
+  const c = document.createElement("canvas");
+  c.width = w; c.height = h;
+  draw(c.getContext("2d"), w, h);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 8;
+  return t;
+}
+
+function wheels(group, positions, r, w, color = 0x1d1d22) {
+  const geo = new THREE.CylinderGeometry(r, r, w, 18);
+  geo.rotateZ(Math.PI / 2);
+  for (const [x, z] of positions) {
+    const m = new THREE.Mesh(geo, mat(color, { roughness: 0.9 }));
+    m.position.set(x, r, z);
+    group.add(m);
+  }
+}
+
+/** RATP standard bus (Citaro-like): jade skirt, white body, dark glazing. */
+function bus() {
+  const g = new THREE.Group();
+  const L = 12, W = 2.5, H = 3.1;
+  const side = canvasTex(1200, 310, (c, w, h) => {
+    c.fillStyle = "#f3f5f4"; c.fillRect(0, 0, w, h);
+    c.fillStyle = "#1f2a33"; c.fillRect(40, 70, w - 80, 120); // window band
+    c.fillStyle = "#f3f5f4";
+    for (let x = 160; x < w - 40; x += 150) c.fillRect(x, 70, 8, 120); // pillars
+    c.fillStyle = "#2a3540"; for (const x of [130, 600]) c.fillRect(x, 70, 90, 230); // doors
+    c.fillStyle = "#00a88f"; c.fillRect(0, 230, w, 45); // jade band
+    c.fillStyle = "#2b2b30"; c.fillRect(0, 275, w, 35);
+  });
+  const body = new THREE.Mesh(new RoundedBoxGeometry(W, H - 0.35, L, 4, 0.25), [
+    mat(0xf3f5f4, { map: side }), mat(0xf3f5f4, { map: side }), mat(0xeef1f0), mat(0x2b2b30),
+    mat(0x1f2a33, { roughness: 0.2, metalness: 0.4 }), mat(0x1f2a33, { roughness: 0.2, metalness: 0.4 }),
+  ]);
+  body.position.y = 0.35 + (H - 0.35) / 2;
+  g.add(body);
+  // Roof pods.
+  const pod = new THREE.Mesh(new RoundedBoxGeometry(1.8, 0.3, 5, 2, 0.1), mat(0xe2e6e4));
+  pod.position.set(0, H + 0.12, -1.5);
+  g.add(pod);
+  wheels(g, [[-1.1, 3.6], [1.1, 3.6], [-1.1, -2.6], [1.1, -2.6]], 0.48, 0.3);
+  return { group: g, length: L };
+}
+
+/** MF01-style métro car: white body, dark windows, blue-green stripe. */
+function metroCar() {
+  const g = new THREE.Group();
+  const L = 15, W = 2.4, H = 3.2;
+  const side = canvasTex(1500, 320, (c, w, h) => {
+    c.fillStyle = "#e9ecef"; c.fillRect(0, 0, w, h);
+    c.fillStyle = "#1c2733"; for (let x = 60; x < w - 60; x += 180) c.fillRect(x, 60, 140, 110);
+    c.fillStyle = "#33404c"; for (const x of [230, 680, 1130]) c.fillRect(x, 50, 110, 250);
+    c.fillStyle = "#1e8a7a"; c.fillRect(0, 205, w, 22);
+    c.fillStyle = "#2f6fb6"; c.fillRect(0, 227, w, 14);
+  });
+  const body = new THREE.Mesh(new RoundedBoxGeometry(W, H - 0.4, L, 4, 0.3), [
+    mat(0xe9ecef, { map: side }), mat(0xe9ecef, { map: side }), mat(0xd9dde1), mat(0x2b2b30), mat(0x1c2733), mat(0x1c2733),
+  ]);
+  body.position.y = 0.4 + (H - 0.4) / 2;
+  g.add(body);
+  wheels(g, [[-0.9, 5.5], [0.9, 5.5], [-0.9, -5.5], [0.9, -5.5]], 0.4, 0.25, 0x2a2a2e);
+  return { group: g, length: L };
+}
+
+/** Mainline cars: a double-deck RER/Transilien car or a TGV-style intercity car. */
+function railCar(style) {
+  const g = new THREE.Group();
+  const rer = style === "rer";
+  const L = rer ? 24 : 20, W = 2.9, H = rer ? 4.3 : 3.8;
+  const side = canvasTex(1600, 420, (c, w, h) => {
+    c.fillStyle = "#eef0f2"; c.fillRect(0, 0, w, h);
+    if (rer) {
+      c.fillStyle = "#1d4f9c"; c.fillRect(0, 250, w, 120);
+      c.fillStyle = "#d7261e"; c.fillRect(0, 238, w, 12);
+      c.fillStyle = "#1c2733";
+      for (let x = 70; x < w - 70; x += 150) { c.fillRect(x, 70, 110, 70); c.fillRect(x, 270, 110, 70); }
+      c.fillStyle = "#33404c"; for (const x of [380, 1150]) c.fillRect(x, 60, 120, 340);
+    } else {
+      c.fillStyle = "#5e6d7f"; c.fillRect(0, 300, w, 70);
+      c.fillStyle = "#3a7ad0"; c.fillRect(0, 290, w, 10);
+      c.fillStyle = "#1c2733"; for (let x = 60; x < w - 60; x += 120) c.fillRect(x, 120, 90, 90);
+      c.fillStyle = "#33404c"; c.fillRect(40, 100, 100, 260);
+    }
+  });
+  const body = new THREE.Mesh(new RoundedBoxGeometry(W, H - 0.5, L, 4, 0.35), [
+    mat(0xeef0f2, { map: side }), mat(0xeef0f2, { map: side }), mat(0xc9ced4), mat(0x2b2b30), mat(0x1c2733), mat(0x1c2733),
+  ]);
+  body.position.y = 0.5 + (H - 0.5) / 2;
+  g.add(body);
+  wheels(g, [[-1, L / 2 - 2.5], [1, L / 2 - 2.5], [-1, -L / 2 + 2.5], [1, -L / 2 + 2.5]], 0.45, 0.25, 0x2a2a2e);
+  return { group: g, length: L };
+}
+
+/** Péniche: long dark hull, cargo hold, wheelhouse at the stern. */
+function peniche() {
+  const g = new THREE.Group();
+  const hull = new THREE.Mesh(new RoundedBoxGeometry(5, 1.6, 38, 3, 0.5), mat(0x1d1f24, { roughness: 0.8 }));
+  hull.position.y = 0.2;
+  g.add(hull);
+  const deckLine = new THREE.Mesh(new THREE.BoxGeometry(5.05, 0.25, 38.05), mat(0xb03a2e));
+  deckLine.position.y = 0.95;
+  g.add(deckLine);
+  const hold = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.6, 26), mat(0x6b5a45, { roughness: 0.9 }));
+  hold.position.set(0, 1.25, 3);
+  g.add(hold);
+  for (let z = -8; z <= 14; z += 4.4) {
+    const hatch = new THREE.Mesh(new THREE.BoxGeometry(4.3, 0.12, 4.1), mat(0x8a7356));
+    hatch.position.set(0, 1.6, z);
+    g.add(hatch);
+  }
+  const house = new THREE.Mesh(new RoundedBoxGeometry(4.2, 2.2, 5, 2, 0.2), mat(0x2c6e5a));
+  house.position.set(0, 2.1, -15.5);
+  g.add(house);
+  const cab = new THREE.Mesh(new RoundedBoxGeometry(2.6, 1.3, 2.4, 2, 0.15), mat(0xf1efe8));
+  cab.position.set(0, 3.8, -16.2);
+  g.add(cab);
+  const glass = new THREE.Mesh(new THREE.BoxGeometry(2.65, 0.55, 2.45), mat(0x22313d, { roughness: 0.2 }));
+  glass.position.set(0, 4.0, -16.2);
+  g.add(glass);
+  const car = new THREE.Mesh(new RoundedBoxGeometry(1.7, 1.1, 3.8, 2, 0.3), mat(0xb8352e));
+  car.position.set(0, 3.8, -13.8);
+  g.add(car);
+  const flowers = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 3), mat(0x5b9a43));
+  flowers.position.set(1.8, 3.3, -15.5);
+  g.add(flowers);
+  return { group: g, length: 38 };
+}
+
+/** Bateau-mouche: long white hull, glazed cabin, open upper deck with benches. */
+function mouche() {
+  const g = new THREE.Group();
+  const hull = new THREE.Mesh(new RoundedBoxGeometry(7, 1.4, 40, 3, 0.6), mat(0xf4f3ee));
+  hull.position.y = 0.3;
+  g.add(hull);
+  const stripe = new THREE.Mesh(new THREE.BoxGeometry(7.05, 0.3, 40.05), mat(0x23466e));
+  stripe.position.y = 0.6;
+  g.add(stripe);
+  const cabin = new THREE.Mesh(new RoundedBoxGeometry(6.4, 2.1, 32, 2, 0.4), [
+    mat(0x5f8aa6, { roughness: 0.15, metalness: 0.3 }), mat(0x5f8aa6, { roughness: 0.15, metalness: 0.3 }),
+    mat(0xeeeeea), mat(0xeeeeea), mat(0x5f8aa6), mat(0x5f8aa6),
+  ]);
+  cabin.position.set(0, 2.05, -2);
+  g.add(cabin);
+  for (let z = -15; z <= 11; z += 2) {
+    for (const x of [-1.8, 1.8]) {
+      const bench = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.4, 0.6), mat(0x2f6fb6));
+      bench.position.set(x, 3.3, z);
+      g.add(bench);
+    }
+  }
+  return { group: g, length: 40 };
+}
+
+/** Small electric rental boat with a coloured canopy, two people aboard. */
+async function smallBoat(canopy) {
+  const g = new THREE.Group();
+  const hull = new THREE.Mesh(new RoundedBoxGeometry(2.1, 0.7, 5, 3, 0.3), mat(0xf6f6f2));
+  hull.position.y = 0.1;
+  g.add(hull);
+  const top = new THREE.Mesh(new THREE.BoxGeometry(2, 0.08, 2.8), mat(canopy));
+  top.position.set(0, 1.9, -0.3);
+  g.add(top);
+  for (const x of [-0.9, 0.9]) for (const z of [-1.6, 1]) {
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 1.5), mat(0xcccccc));
+    pole.position.set(x, 1.15, z);
+    g.add(pole);
+  }
+  for (const [name, z] of [["character-female-b", 0.6], ["character-male-c", -1]]) {
+    const p = await person(name, "sit", 0);
+    p.position.set(0, 0.25, z);
+    g.add(p);
+  }
+  return { group: g, length: 5 };
+}
+
+/** A bicycle: two wheels, frame, handlebar, basket for Vélib'. */
+function bike(frameColor, velib) {
+  const g = new THREE.Group();
+  const tire = mat(0x1c1c20, { roughness: 0.9 });
+  const geo = new THREE.TorusGeometry(0.33, 0.045, 8, 24);
+  geo.rotateY(Math.PI / 2);
+  for (const z of [0.55, -0.55]) {
+    const w = new THREE.Mesh(geo, tire);
+    w.position.set(0, 0.36, z);
+    g.add(w);
+  }
+  const fm = mat(frameColor, { metalness: 0.3, roughness: 0.4 });
+  const tube = (a, b, r = 0.035) => {
+    const va = new THREE.Vector3(...a), vb = new THREE.Vector3(...b);
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, va.distanceTo(vb), 8), fm);
+    m.position.copy(va).add(vb).multiplyScalar(0.5);
+    m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), vb.clone().sub(va).normalize());
+    g.add(m);
+  };
+  tube([0, 0.36, -0.55], [0, 0.85, -0.15]);
+  tube([0, 0.85, -0.15], [0, 0.36, 0.1]);
+  tube([0, 0.36, 0.1], [0, 0.36, -0.55]);
+  tube([0, 0.36, 0.1], [0, 0.95, 0.42]);
+  tube([0, 0.95, 0.42], [0, 0.36, 0.55]);
+  tube([-0.25, 1.05, 0.42], [0.25, 1.05, 0.42], 0.03);
+  const saddle = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.06, 0.25), mat(0x1c1c20));
+  saddle.position.set(0, 0.9, -0.17);
+  g.add(saddle);
+  if (velib) {
+    const basket = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.25, 0.32), fm);
+    basket.position.set(0, 1.0, 0.68);
+    g.add(basket);
+    const guard = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.08, 0.6), fm);
+    guard.position.set(0, 0.72, -0.5);
+    g.add(guard);
+  }
+  return g;
+}
+
+/** A posed Kenney character, scaled to `height` metres, at a time in an animation. */
+async function person(name, anim, t, height = 1.72) {
+  const gltf = await load(name);
+  const obj = SkeletonUtils.clone(gltf.scene);
+  const s = height / 0.67;
+  obj.scale.setScalar(s);
+  const clip = gltf.animations.find((a) => a.name === anim);
+  if (clip) {
+    const mixer = new THREE.AnimationMixer(obj);
+    mixer.clipAction(clip).play();
+    mixer.setTime(t * clip.duration);
+  }
+  obj.updateMatrixWorld(true);
+  return obj;
+}
+
+// ---- baking ----------------------------------------------------------------
+
+/**
+ * spec: { kind: "glb"|"bus"|…, name, length?, height?, swaps?, anim?, frames, dirs, P, extras? }
+ * Returns a PNG data URL (rows = frames, columns = headings) and cell metadata.
+ */
+window.bake = async (spec) => {
+  const P = spec.P, dirs = spec.dirs, frames = spec.frames ?? 1;
+  const make = async (frame) => {
+    const t = frames > 1 ? frame / frames : spec.t ?? 0;
+    let obj;
+    if (spec.kind === "glb") {
+      const gltf = await load(spec.name);
+      obj = SkeletonUtils.clone(gltf.scene);
+      if (spec.swaps) {
+        // "auto": recolour the body's most common texture colour.
+        let swaps = spec.swaps;
+        if (swaps[0][0] === "auto") {
+          let body;
+          obj.traverse((o) => { if (o.isMesh && /body/.test(o.name)) body = o; });
+          // The paint is the most saturated of the common colours (trim and glass are grey).
+          const sat = (h) => { const { r, g, b } = hexRGB(h); return Math.max(r, g, b) - Math.min(r, g, b); };
+          const tone = body && dominantColours(body, 6).sort((p, q) => sat(q) - sat(p))[0];
+          swaps = tone ? [[tone, swaps[0][1]]] : [];
+        }
+        obj.traverse((o) => {
+          if (o.isMesh && o.material.map) {
+            o.material = o.material.clone();
+            o.material.map = recolor(o.material.map, swaps);
+          }
+        });
+      }
+      const box = new THREE.Box3().setFromObject(obj);
+      obj.scale.setScalar(spec.length / box.getSize(new THREE.Vector3()).z);
+      if (spec.flip) obj.rotation.y = Math.PI;
+    } else if (spec.kind === "person") {
+      obj = await person(spec.name, spec.anim, t);
+      if (spec.carry === "banner-pole") {
+        const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 2.2), mat(0x5a4632));
+        pole.position.set(0.35, 1.3, 0.25);
+        obj.add(pole);
+      }
+    } else if (spec.kind === "cyclist") {
+      obj = new THREE.Group();
+      obj.add(bike(spec.frame, spec.velib));
+      const rider = await person(spec.name, "drive", 0);
+      rider.position.set(0, 0.42, -0.12);
+      obj.add(rider);
+    } else if (spec.kind === "bus") obj = bus().group;
+    else if (spec.kind === "metro") obj = metroCar().group;
+    else if (spec.kind === "rail") obj = railCar(spec.style).group;
+    else if (spec.kind === "peniche") obj = peniche().group;
+    else if (spec.kind === "mouche") obj = mouche().group;
+    else if (spec.kind === "smallboat") obj = (await smallBoat(spec.canopy)).group;
+    obj.traverse((o) => (o.frustumCulled = false));
+    return obj;
+  };
+
+  // Cell size from the model's footprint and height.
+  const probe = await make(0);
+  const size = new THREE.Box3().setFromObject(probe).getSize(new THREE.Vector3());
+  const r = Math.hypot(size.x, size.z) / 2;
+  const pad = 6;
+  const cellW = Math.ceil(2 * r * Math.SQRT2 * P + pad * 2);
+  const cellH = Math.ceil((r * Math.SQRT2 + size.y * Z) * P + pad * 2);
+  const anchorY = Math.ceil((size.y * Z + (r * Math.SQRT2) / 2) * P + pad);
+  const R = Math.max(30, r * 4 + size.y * 2);
+
+  renderer.setSize(cellW * dirs, cellH * frames, false);
+  renderer.setScissorTest(true);
+  renderer.clear();
+  for (let f = 0; f < frames; f++) {
+    const obj = f === 0 ? probe : await make(f);
+    for (let d = 0; d < dirs; d++) {
+      // Heading θ measured in the map's ground frame (x east, y south);
+      // models face +Z, so turn them by π/2 − θ about the vertical.
+      const theta = (d / dirs) * Math.PI * 2;
+      const holder = new THREE.Group();
+      holder.rotation.y = Math.PI / 2 - theta;
+      holder.add(obj);
+      const scene = new THREE.Scene();
+      lights(scene);
+      scene.add(holder);
+      const cam = isoCamera(P, cellW, cellH, anchorY, R);
+      // WebGL's origin is bottom-left.
+      const x = d * cellW, y = (frames - 1 - f) * cellH;
+      renderer.setViewport(x, y, cellW, cellH);
+      renderer.setScissor(x, y, cellW, cellH);
+      renderer.render(scene, cam);
+      holder.remove(obj);
+    }
+  }
+  return {
+    png: renderer.domElement.toDataURL("image/png"),
+    meta: { cellW, cellH, anchorX: cellW / 2, anchorY, P, dirs, frames },
+  };
+};
+window.ready = true;
+</script>

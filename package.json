@@ -1,0 +1,24 @@
+{
+  "name": "tiny-paris",
+  "version": "1.0.0",
+  "description": "An isometric tiny Paris drawn in code from OpenStreetMap data",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "data": "node scripts/fetch-osm.mjs",
+    "paint:base": "node scripts/paint/1-base.mjs",
+    "paint": "node scripts/paint/2-paint.mjs",
+    "paint:stitch": "node scripts/paint/3-stitch.mjs",
+    "data:transit": "node scripts/fetch-transit.mjs",
+    "data:pois": "node scripts/fetch-pois.mjs"
+  },
+  "type": "module",
+  "devDependencies": {
+    "playwright-core": "^1.65.0",
+    "three": "^0.187.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.6"
+  },
+  "private": true
+}

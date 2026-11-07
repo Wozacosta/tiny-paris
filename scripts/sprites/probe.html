@@ -1,0 +1,8 @@
+<!doctype html><script type="module">
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+const g = await new GLTFLoader().loadAsync(`/scripts/sprites/models/sedan.glb`);
+const out = [];
+g.scene.traverse(o => { if (o.isMesh) out.push({ name: o.name, mat: o.material.type, map: !!o.material.map, img: o.material.map?.image?.constructor?.name, w: o.material.map?.image?.width, color: o.material.color?.getHexString(), flipY: o.material.map?.flipY, uv: !!o.geometry.attributes.uv }); });
+window.result = out;
+</script>
