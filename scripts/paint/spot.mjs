@@ -1,5 +1,6 @@
 // Repaints one spot of the stitched painting with Gemini, centred on it.
-//   node scripts/paint/spot.mjs --name <slug> --lon <lon> --lat <lat> [--lift px] [--size px] --text "<what to paint in the centre>" --budget <eur>
+//   node scripts/paint/spot.mjs --name <slug> (--lon <lon> --lat <lat> | --px <x>,<y>) [--lift px] [--size px] --text "<what to paint in the centre>" --budget <eur>
+// --px is a position in mosaic pixels (level 0 of public/painted).
 // Asked about "the centre of the image", the model gets placement right far more
 // often than with percentages over a whole tile. Sends a crop of the current
 // painting (public/painted level 0) and the same crop of the base render, writes
@@ -17,6 +18,7 @@ const { values: opt } = parseArgs({
     name: { type: "string" },
     lon: { type: "string" },
     lat: { type: "string" },
+    px: { type: "string" },
     lift: { type: "string", default: "0" }, // move the centre up, for tall buildings
     size: { type: "string", default: "320" },
     radius: { type: "string" }, // cut-out radius in the stitch, default 0.4 × size
@@ -26,7 +28,7 @@ const { values: opt } = parseArgs({
     dry: { type: "boolean", default: false }, // only write the two crops
   },
 });
-if (!opt.name || !opt.lon || !opt.lat || !opt.text) throw new Error("need --name, --lon, --lat and --text");
+if (!opt.name || !(opt.px || (opt.lon && opt.lat)) || !opt.text) throw new Error("need --name, --lon and --lat or --px, and --text");
 
 const RATE = { input: 0.5, output: 60 }; // USD per million tokens, gemini-3.1-flash-image
 const WORST = (4000 * RATE.input + 3000 * RATE.output) / 1e6;
@@ -38,7 +40,7 @@ if (!KEY && !opt.dry) throw new Error("set GEMINI_API_KEY");
 
 const m = JSON.parse(await readFile(`${DIR}/manifest.json`, "utf8"));
 const S = Number(opt.size);
-const [gx, gy0] = landmarkPixel(m, { lon: Number(opt.lon), lat: Number(opt.lat) });
+const [gx, gy0] = opt.px ? opt.px.split(",").map(Number) : landmarkPixel(m, { lon: Number(opt.lon), lat: Number(opt.lat) });
 const x = Math.round(gx), y = Math.round(gy0 - Number(opt.lift));
 
 const { page, close } = await openExportPage();

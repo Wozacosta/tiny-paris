@@ -111,6 +111,14 @@ try {
     // already drawn along the shared edge, fading the shift out across the
     // tile. Only the smooth tone is blended, never detail, so nothing ghosts.
     const MAXSHIFT = 45;
+    // Lighter or darker is a tone drift; a big hue shift means the overlap
+    // shows different things (trees against roofs), and matching it tints a
+    // whole area pink or green. So brightness may shift far, hue only a little.
+    const MAXHUE = 8;
+    const limit = (v, o) => {
+      const mean = (v[o] + v[o + 1] + v[o + 2]) / 3, m = Math.max(-MAXSHIFT, Math.min(MAXSHIFT, mean));
+      for (let c = 0; c < 3; c++) v[o + c] = m + Math.max(-MAXHUE, Math.min(MAXHUE, v[o + c] - mean));
+    };
     // Per position along one edge: the mean (old - new) colour over the overlap strip, smoothed.
     const edgeShift = (a, b, T, O, vertical) => {
       const sum = new Float64Array((T + 1) * 3), cnt = new Float64Array(T + 1);
@@ -127,7 +135,8 @@ try {
       const S = 96, out = new Float32Array(T * 3);
       for (let i = 0; i < T; i++) {
         const lo = Math.max(0, i - S), hi = Math.min(T, i + S), n = cnt[hi] - cnt[lo];
-        for (let c = 0; c < 3; c++) out[i * 3 + c] = n ? Math.max(-MAXSHIFT, Math.min(MAXSHIFT, (sum[hi * 3 + c] - sum[lo * 3 + c]) / n)) : 0;
+        for (let c = 0; c < 3; c++) out[i * 3 + c] = n ? (sum[hi * 3 + c] - sum[lo * 3 + c]) / n : 0;
+        limit(out, i * 3);
       }
       return out;
     };
@@ -183,7 +192,8 @@ try {
           n++;
         }
         if (n) {
-          for (let c = 0; c < 3; c++) m[c] = Math.max(-MAXSHIFT, Math.min(MAXSHIFT, m[c] / n));
+          for (let c = 0; c < 3; c++) m[c] /= n;
+          limit(m, 0);
           for (let k = 0; k < a.length; k += 4) for (let c = 0; c < 3; c++) a[k + c] += m[c];
           t.getContext("2d").putImageData(new ImageData(a, T, T), 0, 0);
         }
