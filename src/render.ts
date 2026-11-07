@@ -321,6 +321,9 @@ export type Photo = (ctx: CanvasRenderingContext2D) => void;
  * Draws what rises above a building's walls (roof slopes, towers, spires) from
  * measured heights, in canvas pixels, when it's that building's turn.
  */
+/** Something drawn in with the buildings at its depth (in world terms, see depthOf). */
+export interface Extra { depth: number; draw: (ctx: CanvasRenderingContext2D) => void }
+
 export type RoofShape = (ctx: CanvasRenderingContext2D, idx: number, z: number, ox: number, oy: number, walls: [string, string]) => void;
 
 /** Context transform taking world metres to canvas pixels at height `h`. */
@@ -436,7 +439,18 @@ export function occluders(ctx: CanvasRenderingContext2D, world: World, view: Rot
 
 export function drawStructures(
   ctx: CanvasRenderingContext2D, world: World, view: RotView, cam: Camera, theme: Theme, res: number, photo?: Photo, roofShape?: RoofShape,
+  extras: Extra[] = [],
 ) {
+  extras = [...extras].sort((a, b) => a.depth - b.depth);
+  let next = 0;
+  const flush = (depth: number) => {
+    while (next < extras.length && extras[next].depth < depth) {
+      ctx.save();
+      ctx.setTransform(cam.zoom, 0, 0, cam.zoom, ox, oy);
+      extras[next++].draw(ctx);
+      ctx.restore();
+    }
+  };
   const { width: cw, height: ch } = ctx.canvas;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, cw, ch);
@@ -455,6 +469,7 @@ export function drawStructures(
     if (x1 < vx0 || x0 > vx1 || y1 < vy0 || y0 > vy1) continue;
     if (it.kind === "b") {
       const bld = world.buildings[it.idx];
+      flush(depthOf(view.rotation, bld.cx, bld.cy));
       const pal = paletteOf(bld, theme);
       ctx.fillStyle = pal.wallA;
       ctx.fill(it.stoneA);
@@ -506,6 +521,7 @@ export function drawStructures(
       }
     }
   }
+  flush(Infinity);
 }
 
 /** Drums and domes, back to front, shaded with a left-to-right gradient. */

@@ -4,8 +4,9 @@
 import type { Building, World } from "./model";
 import {
   Z, buildRotView, depthOf, drawGround, drawStructures, isoToWorld, worldToIso,
-  type Photo, type RoofShape, type Rotation, type RotView,
+  type Extra, type Photo, type RoofShape, type Rotation, type RotView,
 } from "./render";
+import { box, sample } from "./shapes";
 import { DAY } from "./theme";
 
 export interface TinyExport {
@@ -20,13 +21,42 @@ export interface TinyExport {
   render(r: Rotation, cx: number, cy: number, zoom: number, width: number, height: number, aerial?: boolean): Promise<string>;
 }
 
+/**
+ * The métro line 2 viaduct as pieces to merge into the building layer: an
+ * iron deck on stone columns. In the app it's drawn live with the trains;
+ * in the base render it's part of the city, so the painting shows it.
+ */
+function viaductPieces(world: World, r: Rotation): Extra[] {
+  const out: Extra[] = [];
+  for (const l of world.metro) {
+    for (let s = 0; s < l.len; s += 6) {
+      const L = Math.min(6, l.len - s);
+      const p = sample(l, s + L / 2);
+      if (p.z < 2) continue;
+      const pillar = Math.floor((s + 6) / 12) !== Math.floor(s / 12);
+      out.push({
+        depth: depthOf(r, p.x, p.y),
+        draw: (ctx) => {
+          if (pillar) {
+            for (const side of [-1.6, 1.6]) {
+              box(ctx, r, p.x - p.ty * side, p.y + p.tx * side, 0, p.tx, p.ty, 0.9, 0.9, p.z - 1.6, "#bfb39c", "#d6ccb8");
+            }
+          }
+          box(ctx, r, p.x, p.y, p.z - 1.6, p.tx, p.ty, L + 0.3, 5.2, 1.6, "#3e4d47", "#66746c");
+        },
+      });
+    }
+  }
+  return out;
+}
+
 /** paint/ortho/index.json, from scripts/paint/0-ortho.mjs. */
 interface OrthoIndex { side: number; px: number; hpx: number; x0: number; y0: number; cols: number; rows: number }
 
 /** Tallest roof worth texturing, in metres: how far below the view a roof can come from. */
 const MAX_H = 120;
-/** Roof cells this close above the eaves stay part of the flat, photo-textured roof. */
-const FLAT = 0.8;
+/** Height grid spacing in metres (LiDAR HD's 50 cm). */
+const CELL_M = 0.5;
 /** A drop this steep between neighbouring 50 cm cells is a wall, not a roof slope. */
 const WALL = 1;
 
@@ -124,23 +154,40 @@ async function aerialFor(world: World, r: Rotation, cx: number, cy: number, zoom
       x0 = Math.min(x0, o[i]); x1 = Math.max(x1, o[i]);
       y0 = Math.min(y0, o[i + 1]); y1 = Math.max(y1, o[i + 1]);
     }
-    // Cells of the footprint that rise above the eaves.
-    const cells: number[] = [];
-    for (let y = (Math.floor((y0 - wy) * hk) + 0.5) / hk + wy; y < y1; y += CELL) {
-      for (let x = (Math.floor((x0 - wx) * hk) + 0.5) / hk + wx; x < x1; x += CELL) {
-        const h = heightAt(x, y);
-        if (h > eave + FLAT && insideRings(x, y, b.rings)) cells.push(x, y, h);
-      }
+    // The footprint as a grid of height cells.
+    const gi0 = Math.floor((x0 - wx) * hk), gj0 = Math.floor((y0 - wy) * hk);
+    const gw = Math.floor((x1 - wx) * hk) - gi0 + 1, gh = Math.floor((y1 - wy) * hk) - gj0 + 1;
+    const cx = (i: number) => wx + (gi0 + i + 0.5) / hk, cy = (j: number) => wy + (gj0 + j + 0.5) / hk;
+    const n = gw * gh;
+    const inside = new Uint8Array(n), raw = new Float32Array(n);
+    let count = 0;
+    for (let j = 0; j < gh; j++) for (let i = 0; i < gw; i++) {
+      if (!insideRings(cx(i), cy(j), b.rings)) continue;
+      inside[j * gw + i] = 1;
+      raw[j * gw + i] = Math.max(eave, heightAt(cx(i), cy(j)));
+      count++;
     }
-    if (!cells.length) return;
+    if (!count) return;
+    const { heights: fh, slope: onSlope } = cleanRoof(raw, inside, gw, gh, eave);
+
+    // The roof's material from the photo: its shadow-free average colour, so
+    // shadows, overhanging trees and grime don't stain it.
+    const photoAt = (x: number, y: number) => {
+      const u = Math.min(pw - 2, Math.max(0, Math.floor((x - wx) * k - 0.5))), v = Math.min(ph - 2, Math.max(0, Math.floor((y - wy) * k - 0.5)));
+      const p = (v * pw + u) * 4, q = p + pw * 4;
+      return [0, 1, 2].map((c) => (pix[p + c] + pix[p + 4 + c] + pix[q + c] + pix[q + 4 + c]) / 4);
+    };
+    const material = roofMaterial(gw, gh, inside, (i, j) => photoAt(cx(i), cy(j)));
+
     const toPx = (x: number, y: number, h: number) => {
       const [sx, sy] = worldToIso(r, x, y, h);
       return [sx * z + ox, sy * z + oy];
     };
     let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
-    for (let c = 0; c < cells.length; c += 3) {
-      const [tx, ty] = toPx(cells[c], cells[c + 1], cells[c + 2]);
-      const [, gy] = toPx(cells[c], cells[c + 1], eave);
+    for (let j = 0; j < gh; j++) for (let i = 0; i < gw; i++) {
+      if (!inside[j * gw + i]) continue;
+      const [tx, ty] = toPx(cx(i), cy(j), fh[j * gw + i]);
+      const [, gy] = toPx(cx(i), cy(j), eave);
       bx0 = Math.min(bx0, tx); bx1 = Math.max(bx1, tx);
       by0 = Math.min(by0, ty); by1 = Math.max(by1, gy);
     }
@@ -155,45 +202,46 @@ async function aerialFor(world: World, r: Rotation, cx: number, cy: number, zoom
     const out = new Uint32Array(img.data.buffer);
     const wallA = shadeRGB(walls[0]), wallB = shadeRGB(walls[1]), wallMid = shadeRGB(walls[0], walls[1]);
     const windowRGB = shadeRGB(DAY.window);
-    const order = Array.from({ length: cells.length / 3 }, (_, i) => i * 3)
-      .sort((a, c) => depthOf(r, cells[a], cells[a + 1]) - depthOf(r, cells[c], cells[c + 1]));
-    for (const c of order) {
-      const x = cells[c], y = cells[c + 1], h = cells[c + 2];
-      // Slope light from the neighbouring heights.
-      const gx = (heightAt(x + CELL, y) - heightAt(x - CELL, y)) / (2 * CELL);
-      const gy = (heightAt(x, y + CELL) - heightAt(x, y - CELL)) / (2 * CELL);
+    const at = (i: number, j: number) => (i < 0 || j < 0 || i >= gw || j >= gh || !inside[j * gw + i] ? eave : fh[j * gw + i]);
+    // Grid steps to the neighbours just in front on the screen's left and right.
+    const fl = [Math.round(flx * hk), Math.round(fly * hk)], fr = [Math.round(frx * hk), Math.round(fry * hk)];
+    const cells: number[] = [];
+    for (let j = 0; j < gh; j++) for (let i = 0; i < gw; i++) if (inside[j * gw + i]) cells.push(j * gw + i);
+    cells.sort((a, c) => depthOf(r, cx(a % gw), cy((a / gw) | 0)) - depthOf(r, cx(c % gw), cy((c / gw) | 0)));
+    for (const q of cells) {
+      const i = q % gw, j = (q / gw) | 0, x = cx(i), y = cy(j), h = fh[q];
+      const gx = (at(i + 1, j) - at(i - 1, j)) / (2 * CELL), gy = (at(i, j + 1) - at(i, j - 1)) / (2 * CELL);
+      const slope = Math.hypot(gx, gy);
       const nl = Math.hypot(gx, gy, 1);
-      const lit = Math.max(0.7, Math.min(1.15, 0.65 + 0.5 * ((-gx * L[0] - gy * L[1] + L[2]) / nl)));
-      // The photo over the cell, averaged so its finer grain doesn't speckle.
-      const u = Math.min(pw - 2, Math.max(0, Math.floor((x - wx) * k - 0.5))), v = Math.min(ph - 2, Math.max(0, Math.floor((y - wy) * k - 0.5)));
-      const p = (v * pw + u) * 4, q = p + pw * 4;
-      const avg = (o: number) => (pix[p + o] + pix[p + 4 + o] + pix[q + o] + pix[q + 4 + o]) / 4;
-      // Cells on a wall's edge (mixed LiDAR returns) are wall, not roof.
-      const top = Math.hypot(gx, gy) > 2 ? wallMid : rgba(avg(0) * lit, avg(1) * lit, avg(2) * lit);
-      // Each side drops to the neighbour in front of it (the eaves past the
-      // footprint): a steep drop is a wall, a gentle one more of the roof.
-      const below = (dx: number, dy: number) => (insideRings(x + dx, y + dy, b.rings) ? Math.max(eave, Math.min(h, heightAt(x + dx, y + dy))) : eave);
-      const hl = below(flx, fly), hr = below(frx, fry);
-      // A wall seen at an angle shows both faces in one cell: one blended colour.
-      const wall = h - hl > WALL && h - hr > WALL ? wallMid : null;
-      const sides = ([[hl, wallA], [hr, wallB]] as const).map(([hn, face]) => ({
-        bottom: Math.round(toPx(x, y, hn)[1]) - by0,
-        color: h - hn > WALL ? (wall ?? face) : top,
-      }));
+      // Flat roofs evenly lit; slopes shaded towards or away from the sun.
+      const lit = slope < 0.2 ? 1 : Math.max(0.72, Math.min(1.15, 0.65 + 0.5 * ((-gx * L[0] - gy * L[1] + L[2]) / nl)));
+      const ph2 = photoAt(x, y);
+      // A little of the photo for texture (skylights, panels, terraces), never its shadows.
+      const lum = (c: number[]) => c[0] * 0.3 + c[1] * 0.59 + c[2] * 0.11;
+      const w = lum(ph2) < lum(material) * 0.85 ? 0.08 : 0.25;
+      const top = rgba(...([0, 1, 2].map((c) => (material[c] * (1 - w) + ph2[c] * w) * lit) as [number, number, number]));
+      const hl = Math.min(h, at(i + fl[0], j + fl[1])), hr = Math.min(h, at(i + fr[0], j + fr[1]));
+      // A roof slope continues down to its neighbours as roof, never as wall.
+      const flatTop = !onSlope[q];
+      const both = flatTop && h - hl > WALL && h - hr > WALL;
       const [tx, ty] = toPx(x, y, h);
       const left = Math.round(tx - cellW / 2) - bx0, topY = Math.round(ty - cellH / 2) - by0;
       for (let dx = 0; dx < cellW; dx++) {
         const px = left + dx;
         if (px < 0 || px >= W) continue;
-        const s = dx < cellW / 2 ? 0 : 1, sd = sides[s];
-        // Windows on measured walls too: one every 1.5 m along it, per 3 m floor.
-        const along = s === 0 ? x * fly - y * flx : x * fry - y * frx;
-        const bay = Math.floor(along / CELL / CELL / 3 + 0.5) % 3 === 1;
-        for (let py = Math.max(0, topY); py < Math.min(H, Math.max(topY + cellH + 1, sd.bottom)); py++) {
-          if (py <= topY + cellH || sd.color === top) out[py * W + px] = top;
+        const sideL = dx < cellW / 2, hn = sideL ? hl : hr;
+        const wall = flatTop && h - hn > WALL;
+        const face = both ? wallMid : sideL ? wallA : wallB;
+        const bottom = wall || h - hn > 0 ? Math.round(toPx(x, y, hn)[1]) - by0 : topY + cellH;
+        // Windows on measured walls: 1.2 m wide every 2.6 m along the face, per 3 m floor.
+        const [nx, ny] = sideL ? [flx, fly] : [frx, fry];
+        const along = (x * -ny + y * nx) / Math.hypot(nx, ny) / 2.6;
+        const bay = ((along % 1) + 1) % 1 > 0.3 && ((along % 1) + 1) % 1 < 0.76;
+        for (let py = Math.max(0, topY); py < Math.min(H, Math.max(topY + cellH + 1, bottom)); py++) {
+          if (py <= topY + cellH || !wall) out[py * W + px] = top;
           else {
             const zz = h - (py - topY) / (Z * z);
-            out[py * W + px] = bay && zz % 3 > 1 && zz % 3 < 2.3 ? windowRGB : sd.color;
+            out[py * W + px] = bay && zz % 3 > 0.9 && zz % 3 < 2.2 ? windowRGB : face;
           }
         }
       }
@@ -207,6 +255,117 @@ async function aerialFor(world: World, r: Rotation, cx: number, cy: number, zoom
   };
 
   return { photo: (ctx) => ctx.drawImage(pc, wx, wy, pw / k, ph / k), roofShape };
+}
+
+/** Roof cells this far apart in height are separate levels. */
+const LEVEL_GAP = 1.5;
+/** A level, slope or patch smaller than this many cells (2 m²) is noise. */
+const MIN_CELLS = 8;
+
+/**
+ * A building's LiDAR roof made clean: flat parts snapped to the building's
+ * main levels, small patches (chimneys, vents, noise, overhanging branches)
+ * dissolved into their surroundings, slopes (mansards, pitched roofs, domes)
+ * smoothed. Heights at least `eave`; `inside` marks the footprint; `slope`
+ * marks cells on a roof slope.
+ */
+function cleanRoof(raw: Float32Array, inside: Uint8Array, gw: number, gh: number, eave: number) {
+  const n = gw * gh;
+  const at = (a: Float32Array, i: number, j: number, d: number) => (i < 0 || j < 0 || i >= gw || j >= gh || !inside[j * gw + i] ? d : a[j * gw + i]);
+  // Slopes: a steady gradient between 20° and 70°.
+  const slope = new Uint8Array(n);
+  for (let j = 0; j < gh; j++) for (let i = 0; i < gw; i++) {
+    const q = j * gw + i;
+    if (!inside[q]) continue;
+    const h = raw[q];
+    const gx = (at(raw, i + 1, j, h) - at(raw, i - 1, j, h)) / (2 * CELL_M), gy = (at(raw, i, j + 1, h) - at(raw, i, j - 1, h)) / (2 * CELL_M);
+    const g = Math.hypot(gx, gy);
+    if (g > 0.35 && g < 2.7 && raw[q] > eave + 0.5) slope[q] = 1;
+  }
+  // Levels: peaks of the flat cells' height histogram, half-metre bins.
+  const hist = new Map<number, number>();
+  for (let q = 0; q < n; q++) if (inside[q] && !slope[q]) {
+    const bin = Math.round(raw[q] * 2);
+    hist.set(bin, (hist.get(bin) ?? 0) + 1);
+  }
+  const peaks: number[] = [eave];
+  [...hist.entries()].sort((a, c) => c[1] - a[1]).forEach(([bin, cnt]) => {
+    const h = bin / 2;
+    if (cnt >= MIN_CELLS && peaks.every((p) => Math.abs(p - h) >= LEVEL_GAP)) peaks.push(h);
+  });
+  const out = new Float32Array(n);
+  for (let q = 0; q < n; q++) {
+    if (!inside[q]) continue;
+    if (slope[q]) { out[q] = raw[q]; continue; }
+    let best = eave;
+    for (const p of peaks) if (Math.abs(p - raw[q]) < Math.abs(best - raw[q])) best = p;
+    out[q] = best;
+  }
+  // Dissolve small patches (same level, or connected slopes) into the level around them.
+  const seen = new Uint8Array(n);
+  const stack: number[] = [], comp: number[] = [];
+  for (let q0 = 0; q0 < n; q0++) {
+    if (!inside[q0] || seen[q0]) continue;
+    comp.length = 0;
+    stack.push(q0);
+    seen[q0] = 1;
+    while (stack.length) {
+      const q = stack.pop()!;
+      comp.push(q);
+      const i = q % gw, j = (q / gw) | 0;
+      for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const ni = i + di, nj = j + dj, nq = nj * gw + ni;
+        if (ni < 0 || nj < 0 || ni >= gw || nj >= gh || seen[nq] || !inside[nq]) continue;
+        if (slope[q0] ? !slope[nq] : slope[nq] || out[nq] !== out[q0]) continue;
+        seen[nq] = 1;
+        stack.push(nq);
+      }
+    }
+    if (comp.length >= MIN_CELLS) continue;
+    // The most common level bordering the patch, else the eaves.
+    const around = new Map<number, number>();
+    for (const q of comp) {
+      const i = q % gw, j = (q / gw) | 0;
+      for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const ni = i + di, nj = j + dj, nq = nj * gw + ni;
+        if (ni < 0 || nj < 0 || ni >= gw || nj >= gh || !inside[nq] || comp.includes(nq) || slope[nq]) continue;
+        around.set(out[nq], (around.get(out[nq]) ?? 0) + 1);
+      }
+    }
+    const fill = [...around.entries()].sort((a, c) => c[1] - a[1])[0]?.[0] ?? eave;
+    for (const q of comp) { out[q] = fill; slope[q] = 0; }
+  }
+  // Smooth what's left of the slopes so they read as surfaces, not steps.
+  const sm = out.slice();
+  for (let j = 0; j < gh; j++) for (let i = 0; i < gw; i++) {
+    const q = j * gw + i;
+    if (!slope[q]) continue;
+    let s = 0, c = 0;
+    for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+      const ni = i + di, nj = j + dj, nq = nj * gw + ni;
+      if (ni < 0 || nj < 0 || ni >= gw || nj >= gh || !inside[nq] || !slope[nq]) continue;
+      s += out[nq]; c++;
+    }
+    sm[q] = s / c;
+  }
+  return { heights: sm, slope };
+}
+
+/**
+ * A roof's covering colour from the photo over its cells: green if it's
+ * mostly planted, else the mean of its lit, unplanted pixels.
+ */
+function roofMaterial(gw: number, gh: number, inside: Uint8Array, photo: (i: number, j: number) => number[]): number[] {
+  const px: number[][] = [];
+  for (let j = 0; j < gh; j++) for (let i = 0; i < gw; i++) if (inside[j * gw + i]) px.push(photo(i, j));
+  const lum = (c: number[]) => c[0] * 0.3 + c[1] * 0.59 + c[2] * 0.11;
+  const green = (c: number[]) => c[1] - (c[0] + c[2]) / 2 > 10;
+  const greens = px.filter(green);
+  if (greens.length > px.length * 0.45) return [128, 158, 102];
+  const lit = px.filter((c) => !green(c)).sort((a, c) => lum(a) - lum(c));
+  const keep = lit.slice(Math.floor(lit.length * 0.35));
+  if (!keep.length) return [150, 155, 160];
+  return [0, 1, 2].map((c) => keep.reduce((s, p) => s + p[c], 0) / keep.length);
 }
 
 function insideRings(x: number, y: number, rings: Float64Array[]) {
@@ -272,7 +431,7 @@ export function installExport(world: World) {
       const cam = { cx, cy, zoom };
       const air = aerial ? await aerialFor(w, r, cx, cy, zoom, width, height) : undefined;
       drawGround(ground.getContext("2d")!, w, view, cam, DAY, 1, air?.photo);
-      drawStructures(build.getContext("2d")!, w, view, cam, DAY, 1, air?.photo, w === world ? undefined : air?.roofShape);
+      drawStructures(build.getContext("2d")!, w, view, cam, DAY, 1, air?.photo, w === world ? undefined : air?.roofShape, viaductPieces(w, r));
       const ctx = out.getContext("2d")!;
       ctx.fillStyle = DAY.ground;
       ctx.fillRect(0, 0, width, height);

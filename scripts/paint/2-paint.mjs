@@ -87,6 +87,8 @@ Keep each building's architectural style and colour from this image; the colours
 - Roofs and the ground are textured with real aerial photos: keep what they show, at the same places, painted cleanly in the illustration style — zinc and slate roofs, terracotta tiles, chimney stacks, skylights and glass courtyard roofs, rooftop terraces and gardens, solar panels, trees and gardens in courtyards, school yards and sports courts, parked cars. Make each roof as varied as the photo is. Ignore the photo's own shadows and blur.
 - Roof shapes (slopes, ridges, towers, spires, domes) are measured: keep each one's exact silhouette.
 - Paint it all as a clean, bright illustration: crisp edges, fresh natural colours, clear afternoon light; no photographic grime, noise or dark blotches.
+
+This image is a rough 3D blockout, not a finished picture: repaint every surface completely, with proper façades (stone, windows, balconies, shopfronts), clean roofs and illustrated trees and streets. Never return it unchanged, filtered or only lightly retouched.
 - Streets: dark asphalt with light stone pavements and crossings; small cars stay small.
 - Trees and parks: lush rounded canopies with soft light and shadow; canal water calm blue-green.
 - Lighting: soft afternoon sun from the left, gentle ambient occlusion where walls meet the ground, crisp edges.
@@ -128,6 +130,9 @@ async function paint(id) {
     (features.get(id).rail > 300
       ? `\n\nRailway tracks (bundles of parallel grey lines on the ground) are open-air rail yards: paint them as tracks on grey ballast with overhead catenary masts and trains, at ground level, exactly where the base image has them and nowhere else. Never put buildings, roofs or streets over them, and never cover them with a station roof unless the base image shows one there.`
       : `\n\nThere are no railway tracks or rail yards anywhere in this image: do not paint any.`) +
+    (features.get(id).viaduct > 30
+      ? `\n\nThe dark green band raised on pale columns is the elevated métro line 2 viaduct: paint it as the real one, a riveted dark green iron girder deck carried on pairs of stone and cast-iron columns above the middle of the boulevard, with the street and traffic passing underneath. Keep it exactly where it is, empty (no train on it: trains are animated separately).`
+      : "") +
     (features.get(id).water > 0
       ? `\n\nWater: paint canals, basins and pools only exactly where the base image shows blue water. Everything else is dry land: never add canals, pools, ponds or fountains.`
       : `\n\nThere is no water anywhere in this image: no canal, river, basin, pond, pool or fountain. Parks are lawn, paths and trees; squares are paving.`);

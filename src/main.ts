@@ -125,6 +125,7 @@ function present() {
   blit(ctx, groundSnap);
   blit(ctx, buildSnap);
   if (painted && showPainted) painted.draw(ctx, { ...cam, zoom: z }, rotation);
+  traffic.showViaduct = !(painted && showPainted);
 
   // Moving things go on their own layer, cut away wherever the live building
   // layer has something in front of them, then on top of everything. That

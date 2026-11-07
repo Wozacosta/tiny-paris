@@ -67,6 +67,8 @@ interface Station {
 export class Traffic {
   private vehicles: Vehicle[] = [];
   private viaduct: ViaductPiece[] = [];
+  /** Off when the painting already shows the viaduct: only the trains go on top. */
+  showViaduct = true;
   private stations: Station[] = [];
   /** Flattened bus line stretches, and for each the stretch that follows it. */
   private busSegs: Lane[] = [];
@@ -310,7 +312,7 @@ export class Traffic {
     const items: { depth: number; draw: () => void }[] = [];
     this.useSprites = !!this.sprites && cssZoom >= SPRITE_ZOOM;
 
-    for (const p of only == null ? this.viaduct : []) {
+    for (const p of only == null && this.showViaduct ? this.viaduct : []) {
       if (!inView(p.x, p.y, p.z, 30)) continue;
       items.push({
         depth: depthOf(r, p.x, p.y) - 0.5,
