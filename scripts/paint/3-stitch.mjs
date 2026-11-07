@@ -325,6 +325,52 @@ try {
   }
   if (spots.length) console.log(`${spots.length} spot repaints`);
 
+  // Brick that shouldn't be: red walls on buildings the data says aren't
+  // brick (paint/stonemask, from 1-base.mjs --mask) become cream stone,
+  // keeping the painting's shading and windows. Roofs aren't touched.
+  if (existsSync(`${DIR}/stonemask`)) {
+    await page.evaluate(({ w, h }) => {
+      window.stoneMask = document.createElement("canvas");
+      window.stoneMask.width = w;
+      window.stoneMask.height = h;
+    }, { w: m.width, h: m.height });
+    for (const { c, r } of m.tiles) {
+      const data = (await readFile(`${DIR}/stonemask/${c}_${r}.png`)).toString("base64");
+      await page.evaluate(async ({ data, x, y }) => {
+        const img = new Image();
+        img.src = `data:image/png;base64,${data}`;
+        await img.decode();
+        window.stoneMask.getContext("2d").drawImage(img, x, y);
+      }, { data, x: c * m.step, y: r * m.step });
+    }
+    const n = await page.evaluate(({ w, h }) => {
+      const B = 1024;
+      const mg = window.mosaic.getContext("2d", { willReadFrequently: true });
+      const kg = window.stoneMask.getContext("2d", { willReadFrequently: true });
+      // Cream stone, lit and shaded faces averaged; brick's own brightness maps onto it.
+      const STONE = [236, 222, 193], BRICK_LUM = 118;
+      let changed = 0;
+      for (let y = 0; y < h; y += B) for (let x = 0; x < w; x += B) {
+        const bw = Math.min(B, w - x), bh = Math.min(B, h - y);
+        const img = mg.getImageData(x, y, bw, bh), a = img.data;
+        const k = kg.getImageData(x, y, bw, bh).data;
+        for (let i = 0; i < a.length; i += 4) {
+          if (k[i] < 128 || !a[i + 3]) continue;
+          const R = a[i], G = a[i + 1], Bl = a[i + 2];
+          // Brick red to brown: red well above green, green above or near blue.
+          if (!(R - G > 28 && R - Bl > 40 && G >= Bl - 12 && R > 70)) continue;
+          const lum = 0.3 * R + 0.59 * G + 0.11 * Bl;
+          const f = Math.min(1.08, Math.max(0.55, lum / BRICK_LUM));
+          a[i] = STONE[0] * f; a[i + 1] = STONE[1] * f; a[i + 2] = STONE[2] * f;
+          changed++;
+        }
+        mg.putImageData(img, x, y);
+      }
+      return changed;
+    }, { w: m.width, h: m.height });
+    console.log(`\n${(n / 1e6).toFixed(1)} Mpx of brick recoloured to stone`);
+  }
+
   // Keep only the area itself, fading out over the last stretch of its edge
   // so it blends into the live map around it.
   await page.evaluate(({ poly, ox, oy, Z, FEATHER }) => {

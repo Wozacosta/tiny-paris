@@ -1,15 +1,18 @@
 // Renders the painted area from the live map as overlapping base tiles.
-//   node scripts/paint/1-base.mjs [--out paint/base] [--only 9_7,17_7]
+//   node scripts/paint/1-base.mjs [--out paint/base] [--only 9_7,17_7] [--mask]
 // Writes paint/base/<col>_<row>.png and paint/manifest.json (not with --only).
+// With --mask, writes the stone-wall masks the stitch recolours with
+// (paint/stonemask/<col>_<row>.png) instead, and leaves the manifest alone.
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { AREA, DIR, OVERLAP, ROTATION, STEP, TILE, ZOOM, areaPolygon, openExportPage } from "./common.mjs";
 
 const { values: opt } = parseArgs({
-  options: { out: { type: "string", default: `${DIR}/base` }, only: { type: "string" } },
+  options: { out: { type: "string" }, only: { type: "string" }, mask: { type: "boolean", default: false } },
 });
 const only = opt.only ? new Set(opt.only.split(",")) : null;
+opt.out ??= opt.mask ? `${DIR}/stonemask` : `${DIR}/base`;
 
 const { page, close } = await openExportPage();
 try {
@@ -54,15 +57,15 @@ try {
       const cx = ox + (c * STEP + TILE / 2) / ZOOM;
       const cy = oy + (r * STEP + TILE / 2) / ZOOM;
       const url = await page.evaluate(
-        ({ R, cx, cy, Z, T }) => window.tinyExport.render(R, cx, cy, Z, T, T),
-        { R: ROTATION, cx, cy, Z: ZOOM, T: TILE },
+        ({ R, cx, cy, Z, T, mask }) => (mask ? window.tinyExport.stoneMask(R, cx, cy, Z, T, T) : window.tinyExport.render(R, cx, cy, Z, T, T)),
+        { R: ROTATION, cx, cy, Z: ZOOM, T: TILE, mask: opt.mask },
       );
       await writeFile(`${opt.out}/${c}_${r}.png`, Buffer.from(url.split(",")[1], "base64"));
       process.stdout.write(".");
     }
   }
   const manifest = { area: AREA, rotation: ROTATION, zoom: ZOOM, tile: TILE, step: STEP, overlap: OVERLAP, origin: [ox, oy], width, height, cols, rows, polygon: poly, tiles };
-  if (!only) await writeFile(`${DIR}/manifest.json`, JSON.stringify(manifest, null, 2));
+  if (!only && !opt.mask) await writeFile(`${DIR}/manifest.json`, JSON.stringify(manifest, null, 2));
   console.log(`\n${tiles.length} base tiles (${cols}×${rows} grid, mosaic ${width}×${height}px)`);
 } finally {
   await close();

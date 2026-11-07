@@ -260,7 +260,9 @@ function classify(bd: BdRow | undefined, kind: string, h: number, area: number, 
   // Big station halls are iron-and-glass sheds.
   if (kind === "train_station" && area > 2500) return { style: "stone", roof: "glass" };
   let style: Style;
-  if (has(walls, "4") && !has(walls, "1") && (!year || year < 1950)) style = "brick";
+  // Brick walls before 1905 are almost always rendered over in cream plaster;
+  // exposed red brick is the 1905–1949 social housing and workshops.
+  if (has(walls, "4") && !has(walls, "1") && year >= 1905 && year < 1950) style = "brick";
   else if (tall || (year >= 1950 && year < 1990) || (has(walls, "3") && !has(walls, "1"))) style = year >= 1990 ? "recent" : "modern";
   else if (year >= 1990) style = "recent";
   else style = "stone";

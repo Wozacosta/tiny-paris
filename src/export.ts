@@ -19,6 +19,12 @@ export interface TinyExport {
    * LiDAR-measured shape.
    */
   render(r: Rotation, cx: number, cy: number, zoom: number, width: number, height: number, aerial?: boolean): Promise<string>;
+  /**
+   * PNG data URL, same framing as render(): white where a wall that isn't
+   * brick shows, black elsewhere (roofs, brick walls, trees, ground). The
+   * stitch uses it to take red off walls the painting made brick by mistake.
+   */
+  stoneMask(r: Rotation, cx: number, cy: number, zoom: number, width: number, height: number): string;
 }
 
 /**
@@ -416,6 +422,29 @@ export function installExport(world: World) {
         const [x, y] = world.project(lon, lat);
         return worldToIso(r, x, y);
       });
+    },
+    stoneMask(r, cx, cy, zoom, width, height) {
+      const view = (views[r] ??= buildRotView(world, r));
+      const c = document.createElement("canvas");
+      c.width = width;
+      c.height = height;
+      const g = c.getContext("2d")!;
+      g.fillStyle = "#000";
+      g.fillRect(0, 0, width, height);
+      g.setTransform(zoom, 0, 0, zoom, width / 2 - cx * zoom, height / 2 - cy * zoom);
+      // Back to front, so whatever stands in front covers what's behind.
+      for (const it of view.items) {
+        if (it.kind === "b") {
+          g.fillStyle = world.buildings[it.idx].style === "brick" ? "#000" : "#fff";
+          for (const p of [it.stoneA, it.stoneB, it.mansA, it.mansB]) if (p) g.fill(p);
+          g.fillStyle = "#000";
+          g.fill(it.roof, "evenodd");
+        } else {
+          g.fillStyle = "#000";
+          g.fill(it.canopy);
+        }
+      }
+      return c.toDataURL("image/png");
     },
     async render(r, cx, cy, zoom, width, height, aerial = true) {
       eaved ??= eaveWorld(world);
