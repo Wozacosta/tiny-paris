@@ -346,7 +346,8 @@ try {
       if (!touches(sp.y - sp.size / 2, sp.y + sp.size / 2)) continue;
       const data = (await readFile(`${DIR}/spots/${sp.name}.png`)).toString("base64");
       await page.evaluate((args) => window.placeLandmark(args), {
-        data, x: sp.x - sp.size / 2, y: sp.y - sp.size / 2, T: sp.size, cx: sp.x, cy: sp.y, R: sp.r,
+        // `dy` moves the cut's centre off the crop's, for tall things.
+        data, x: sp.x - sp.size / 2, y: sp.y - sp.size / 2, T: sp.size, cx: sp.x, cy: sp.y + (sp.dy ?? 0), R: sp.r,
       });
     }
 

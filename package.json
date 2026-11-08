@@ -20,5 +20,8 @@
     "typescript": "^7.0.2",
     "vite": "^8.3.6"
   },
-  "private": true
+  "private": true,
+  "dependencies": {
+    "@vercel/analytics": "^2.0.1"
+  }
 }

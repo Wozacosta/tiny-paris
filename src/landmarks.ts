@@ -82,7 +82,7 @@ export const LANDMARKS: Landmark[] = [
   { name: "Place Vendôme", note: "1er", lon: 2.3294, lat: 48.8675, zoom: 3.2 },
   { name: "Gare Saint-Lazare", note: "8e", lon: 2.325, lat: 48.8763, zoom: 2.2 },
   { name: "Parc Monceau", note: "8e", lon: 2.3088, lat: 48.8797, zoom: 2.4 },
-  { name: "Tribunal de Paris", note: "17e", lon: 2.3159, lat: 48.8966, zoom: 2.2, z: 60, top: 170 },
+  { name: "Tribunal de Paris", note: "17e", lon: 2.30995, lat: 48.89499, zoom: 2.2, z: 60, top: 170 },
   // South-east and south.
   { name: "Gare de Lyon", note: "12e", lon: 2.3739, lat: 48.8444, zoom: 2.4 },
   { name: "Bercy", note: "12e", lon: 2.3785, lat: 48.8386, zoom: 2.4 },

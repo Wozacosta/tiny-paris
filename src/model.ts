@@ -98,6 +98,8 @@ export interface World {
   boundary: Float64Array;
   /** Whether a point is inside the outline (`margin` metres in, if given). */
   onMap(x: number, y: number, margin?: number): boolean;
+  /** Whether a point is on open water (rivers, canals, basins), on a 4 m grid. */
+  onWater(x: number, y: number): boolean;
   buildings: Building[];
   trees: Float64Array;
   ground: {
@@ -349,6 +351,33 @@ function heightOf(b: RawBuilding, cx: number, cy: number, area: number) {
   return h;
 }
 
+/** A point-on-water test over the map, from the water polygons filled row by row (even-odd, so islands stay dry). */
+function waterGrid(polys: number[][][], k: number, [bx0, by0, bx1, by1]: [number, number, number, number]) {
+  const G = 4, gw = Math.ceil((bx1 - bx0) / G), gh = Math.ceil((by1 - by0) / G);
+  const grid = new Uint8Array(gw * gh);
+  const rings = polys.flat().map((r) => Float64Array.from(r, (v) => v / k));
+  for (const r of rings) {
+    let y0 = Infinity, y1 = -Infinity;
+    for (let i = 1; i < r.length; i += 2) { y0 = Math.min(y0, r[i]); y1 = Math.max(y1, r[i]); }
+    for (let j = Math.max(0, Math.floor((y0 - by0) / G)); j <= Math.min(gh - 1, Math.ceil((y1 - by0) / G)); j++) {
+      const y = by0 + (j + 0.5) * G, xs: number[] = [];
+      for (let i = 0, p = r.length - 2; i < r.length; p = i, i += 2) {
+        const ya = r[p + 1], yb = r[i + 1];
+        if (ya > y !== yb > y) xs.push(r[p] + ((y - ya) / (yb - ya)) * (r[i] - r[p]));
+      }
+      xs.sort((a, b) => a - b);
+      for (let q = 0; q + 1 < xs.length; q += 2) {
+        const a = Math.max(0, Math.ceil((xs[q] - bx0) / G - 0.5)), b = Math.min(gw - 1, Math.floor((xs[q + 1] - bx0) / G - 0.5));
+        for (let i = a; i <= b; i++) grid[j * gw + i] ^= 1;
+      }
+    }
+  }
+  return (x: number, y: number) => {
+    const i = Math.floor((x - bx0) / G), j = Math.floor((y - by0) / G);
+    return i >= 0 && j >= 0 && i < gw && j < gh && grid[j * gw + i] === 1;
+  };
+}
+
 function ringsToPath(path: Path2D, rings: number[][], k: number) {
   for (const r of rings) {
     if (r.length < 6) continue;
@@ -468,6 +497,7 @@ export async function loadWorld(url: string, bdtopoUrl?: string, onProgress?: (f
   for (const p of raw.parks) ringsToPath(p.k === "pitch" ? pitches : p.k === "cemetery" ? cemeteries : parks, p.r, k);
   const water = new Path2D();
   for (const w of raw.water) ringsToPath(water, w, k);
+  const onWater = waterGrid(raw.water, k, raw.bounds);
   const bridges = new Path2D();
   for (const b of raw.bridges) ringsToPath(bridges, b, k);
 
@@ -571,7 +601,7 @@ export async function loadWorld(url: string, bdtopoUrl?: string, onProgress?: (f
 
 
   return {
-    bounds: raw.bounds, boundary, onMap, buildings, trees, roads, streets, junctions, metro, walks, walkJunctions, rails, greens,
+    bounds: raw.bounds, boundary, onMap, onWater, buildings, trees, roads, streets, junctions, metro, walks, walkJunctions, rails, greens,
     ground: { slab, parks, pitches, cemeteries, water, bridges, treeShadows, shadows },
     project,
   };

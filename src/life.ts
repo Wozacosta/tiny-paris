@@ -136,15 +136,16 @@ export class Life {
     for (const w of transit.waterways) {
       const l = w.lane;
       if (w.kind === "river") {
-        // The Seine runs along the map's southern edge: use its northern half.
+        // Two lanes either side of the Seine's centre line, one per direction
+        // of travel; boats keep to the right like on the real river.
         const sgn = northSign(l);
-        const down = offsetLane(l, sgn * 22), up = offsetLane(l, sgn * 48);
-        for (let i = 0; i < 2; i++) add(PENICHE, i ? up : down, 2.6);
-        add(PENICHE, up, 2.2);
-        add(MOUCHE, down, 3.5);
-        add(MOUCHE, up, 3.5);
-        add(SMALL, down, 4);
-        add(SMALL, up, 4);
+        const lanes = [-1, 1].map((side) => offsetLane(l, sgn * side * 14));
+        const n = Math.max(1, Math.round(l.len / 1500));
+        for (let k = 0; k < n; k++) {
+          add(PENICHE, pick(lanes), 2.6);
+          add(MOUCHE, pick(lanes), 3.5);
+          add(SMALL, pick(lanes), 4);
+        }
       } else if (/Bassin/.test(w.name)) {
         for (const d of [-14, -5, 5, 14]) for (let i = 0; i < 2; i++) add(SMALL, offsetLane(l, d), 1.6);
         add(TOUR, l, 2.2);
@@ -277,6 +278,11 @@ export class Life {
       for (const b of this.boats) {
         const p = sample(b.lane, b.s);
         if (!onMap(p.x, p.y, 12) || !inView(p.x, p.y, 0, 40)) continue;
+        // Never on a quay: bow, stern and both sides must be over water.
+        const half = b.kind === PENICHE ? 18 : b.kind === SMALL ? 3 : 14, beam = b.kind === SMALL ? 1.5 : 4;
+        const water = this.world.onWater;
+        if (!water(p.x + p.tx * half, p.y + p.ty * half) || !water(p.x - p.tx * half, p.y - p.ty * half) ||
+            !water(p.x + p.ty * beam, p.y - p.tx * beam) || !water(p.x - p.ty * beam, p.y + p.tx * beam)) continue;
         const tx = p.tx * b.dir, ty = p.ty * b.dir;
         items.push({ depth: depthOf(r, p.x, p.y), draw: () => this.drawBoat(ctx, r, b, p.x, p.y, tx, ty, theme) });
       }

@@ -1,3 +1,4 @@
+import { inject } from "@vercel/analytics";
 import { loadTransit, loadWorld, type Building, type World } from "./model";
 import { LANDMARKS } from "./landmarks";
 import { buildRotView, drawGround, drawHighlight, drawStructures, occluders, pick, worldToIso, type Camera, type Rotation, type RotView } from "./render";
@@ -542,6 +543,9 @@ function showLoading(f: number | null) {
   (el.querySelector(".bar i") as HTMLElement).style.width = `${Math.round(f * 100)}%`;
   el.querySelector(".what")!.textContent = f < 1 ? `Downloading the city · ${Math.round(f * 100)}%` : "Building 100,000 buildings…";
 }
+
+// Vercel Web Analytics: page views, no cookies.
+inject();
 
 async function main() {
   const [w, transit, pois] = await Promise.all([

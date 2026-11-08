@@ -136,7 +136,9 @@ for (const f of kept) {
   if (!polys.length) continue;
   const flat = (poly) => poly.map((r) => r.flat());
   if (t.building) {
-    if (t.building === "construction" || t.location === "underground") continue;
+    // Building sites are usually just hoardings, but ones mapped with a
+    // height are towers about to open (the Tour Triangle): keep those.
+    if ((t.building === "construction" && !parseMetres(t.height)) || t.location === "underground") continue;
     for (const poly of polys) out.buildings.push({ r: flat(poly), h: heightOf(t), i: infoOf(t) });
   } else if (t.natural === "water") {
     for (const poly of polys) out.water.push(flat(poly));
