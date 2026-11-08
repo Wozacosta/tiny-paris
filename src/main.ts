@@ -25,7 +25,6 @@ const rotation: Rotation = 3;
 let painted: PaintedLayer | null = null;
 let showPainted = true;
 let theme: Theme = DAY;
-let pixel = false;
 let res = 1;
 /** Camera with zoom in CSS pixels per iso unit; converted to canvas pixels on draw. */
 const cam: Camera = { cx: 0, cy: 0, zoom: 1 };
@@ -121,7 +120,6 @@ function present() {
   };
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.imageSmoothingEnabled = !pixel;
   blit(ctx, groundSnap);
   blit(ctx, buildSnap);
   if (painted && showPainted) painted.draw(ctx, { ...cam, zoom: z }, rotation);
@@ -265,10 +263,9 @@ function follow(kind: "bus" | "velib" | "truck" | null) {
 }
 
 function resize() {
-  res = pixel ? 0.5 : Math.min(devicePixelRatio, 2);
+  res = Math.min(devicePixelRatio, 2);
   canvas.width = Math.round(innerWidth * res);
   canvas.height = Math.round(innerHeight * res);
-  canvas.classList.toggle("pixel", pixel);
   fitBounds();
   requestRender();
 }
@@ -347,12 +344,6 @@ function togglePainted() {
   showPainted = !showPainted;
   $("painted").setAttribute("aria-pressed", String(showPainted));
   requestPresent();
-}
-
-function setPixel(on: boolean) {
-  pixel = on;
-  $("pixel").setAttribute("aria-pressed", String(on));
-  resize();
 }
 
 function showInfo(i: number | null) {
@@ -486,7 +477,6 @@ function setupInput() {
     if (k === "+" || k === "=") zoomAt(1.4);
     else if (k === "-" || k === "_") zoomAt(1 / 1.4);
     else if (k === "n") setTheme(theme === DAY ? NIGHT : DAY);
-    else if (k === "p") setPixel(!pixel);
     else if (k === "a") togglePainted();
     else if (k === "w") wander();
     else if (k === "h") {
@@ -502,7 +492,6 @@ function setupInput() {
   $("zoom-in").onclick = () => zoomAt(1.5);
   $("zoom-out").onclick = () => zoomAt(1 / 1.5);
   $("theme").onclick = () => setTheme(theme === DAY ? NIGHT : DAY);
-  $("pixel").onclick = () => setPixel(!pixel);
   $("painted").onclick = togglePainted;
   $("home").onclick = () => {
     follow(null);

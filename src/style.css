@@ -22,7 +22,6 @@
   /* RATP métro line colours, for the control bullets. */
   --m1: #ffcd00;
   --m2: #003ca6;
-  --m4: #cf009e;
   --m5: #ff7e2e;
   --m6: #6eca97;
   --m8: #e19bdf;
@@ -61,10 +60,6 @@ body {
   height: 100%;
   cursor: grab;
   touch-action: none;
-}
-
-#map.pixel {
-  image-rendering: pixelated;
 }
 
 #map.dragging {
