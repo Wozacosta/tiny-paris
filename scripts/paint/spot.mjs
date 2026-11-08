@@ -116,9 +116,11 @@ const json = await res.json().catch(() => ({}));
 const u = json.usageMetadata;
 // No usage means the call never ran (quota or rate limit), which isn't billed.
 const eur = u ? ((u.promptTokenCount ?? 0) * RATE.input + ((u.candidatesTokenCount ?? 0) + (u.thoughtsTokenCount ?? 0)) * RATE.output) / 1e6 : res.ok ? WORST : 0;
-spend.totalEur += eur;
-spend.calls.push({ id: `spot:${opt.name}`, model: opt.model, eur: Number(eur.toFixed(4)), at: new Date().toISOString() });
-await writeFile(SPEND_FILE, JSON.stringify(spend, null, 2));
+// Read it again: spots run side by side, and each must add to the others' total.
+const latest = JSON.parse(await readFile(SPEND_FILE, "utf8"));
+latest.totalEur += eur;
+latest.calls.push({ id: `spot:${opt.name}`, model: opt.model, eur: Number(eur.toFixed(4)), at: new Date().toISOString() });
+await writeFile(SPEND_FILE, JSON.stringify(latest, null, 2));
 
 const data = json.candidates?.[0]?.content?.parts?.find((p) => p.inlineData)?.inlineData?.data;
 if (!res.ok || !data) throw new Error(`no image: ${json.error?.message ?? json.candidates?.[0]?.finishReason ?? res.status}`);
@@ -131,4 +133,4 @@ const i = spots.findIndex((s) => s.name === opt.name);
 if (i >= 0) spots[i] = spot;
 else spots.push(spot);
 await writeFile(file, JSON.stringify(spots, null, 1));
-console.log(`${DIR}/spots/${opt.name}.png · ≈ €${eur.toFixed(3)}, total ≈ €${spend.totalEur.toFixed(2)}`);
+console.log(`${DIR}/spots/${opt.name}.png · ≈ €${eur.toFixed(3)}, total ≈ €${latest.totalEur.toFixed(2)}`);

@@ -2,8 +2,6 @@
   <rect width="64" height="64" rx="14" fill="#2f6b4f"/>
   <rect x="4.5" y="4.5" width="55" height="55" rx="10" fill="#fff"/>
   <rect x="7" y="7" width="50" height="50" rx="8" fill="#1f2c6b"/>
-  <g fill="#fff">
-    <path d="M12 18h20v6.5h-6.75V46h-6.5V24.5H12z"/>
-    <path fill-rule="evenodd" d="M35 18h9.5a8.5 8.5 0 0 1 0 17H41.5v11H35zM41.5 24v5h3a2.5 2.5 0 0 0 0-5z"/>
-  </g>
+  <!-- The Eiffel Tower: spire, two platforms, the arch between the legs. -->
+  <path fill="#fff" d="M32 10l1.2 7 2.3 12h2v3h-1.5l3.5 9h2.5v3h-1.5l7.5 10h-8q-8-11-16 0h-8l7.5-10h-1.5v-3h2.5l3.5-9h-1.5v-3h2l2.3-12z"/>
 </svg>

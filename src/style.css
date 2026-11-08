@@ -274,6 +274,16 @@ h1 {
   box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.85);
 }
 
+/* Phones show a "fit" glyph instead of the label. */
+.controls .fit {
+  display: none;
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: var(--enamel);
+  stroke-width: 2.2;
+}
+
 /* An action, not a switch: always filled. */
 .controls .row i.home {
   background: var(--c);
@@ -546,19 +556,127 @@ h1 {
   pointer-events: auto;
 }
 
+/* Phones and tablets get the touch hint; the ticket button is for phones. */
+.more,
+.hint-touch {
+  display: none;
+}
+
+@media (pointer: coarse) {
+  .hint {
+    display: none;
+  }
+  .hint-touch {
+    display: inline;
+  }
+}
+
+/* Phones: a one-line plaque that opens the ticket, a slim column of map
+   buttons, and as much of the map as possible. */
 @media (max-width: 700px) {
   .title {
-    width: 230px;
+    top: 10px;
+    left: 10px;
+    width: auto;
   }
-  h1 {
-    font-size: 26px;
+  .title.open {
+    width: min(300px, calc(100vw - 76px));
+  }
+  .title .plaque {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 4px 8px 5px 12px;
+    border-width: 4px;
+  }
+  .title .arrt {
+    display: none;
+  }
+  .title h1 {
+    font-size: 22px;
+  }
+  .more {
+    display: grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    border: 1.5px solid #fff;
+    border-radius: 50%;
+    font: 600 13px/1 "Barlow Condensed", sans-serif;
+  }
+  .more[aria-expanded="true"] {
+    color: var(--enamel);
+    background: #fff;
+  }
+  /* The whole plaque is the button's tap target. */
+  .more::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+  }
+  .ticket {
+    display: none;
+  }
+  .title.open .ticket {
+    display: block;
+  }
+  .controls {
+    top: 10px;
+    right: 10px;
+    width: auto;
+    padding: 4px;
+  }
+  .controls .zoom {
+    grid-template-columns: 1fr;
+  }
+  .controls .zoom button {
+    width: 34px;
+    height: 34px;
+  }
+  #painted {
+    display: none;
+  }
+  #home {
+    display: grid;
+    place-items: center;
+    height: 34px;
+    padding: 0;
+    font-size: 0;
+    border-radius: 4px;
+    background: #fff;
+  }
+  #home i {
+    display: none;
+  }
+  #home .fit {
+    display: block;
   }
   .places {
-    display: none;
+    left: 10px;
+    bottom: 42px;
+    width: auto;
+  }
+  .places.open {
+    right: 10px;
+  }
+  .follow {
+    flex-wrap: wrap;
+  }
+  .streets {
+    top: 60px;
+    bottom: auto;
+  }
+  .credit {
+    bottom: 6px;
+    padding: 0 8px;
+    font-size: 9.5px;
   }
   .info,
   .report {
-    left: 16px;
+    left: 10px;
+    right: 10px;
+    bottom: 42px;
     width: auto;
   }
 }

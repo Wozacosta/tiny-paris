@@ -40,8 +40,9 @@
       <div class="plaque">
         <span class="arrt">1<sup>er</sup> – 20<sup>e</sup> · La Défense</span>
         <h1>Tiny Paris</h1>
+        <button class="more" id="title-more" type="button" aria-expanded="false" aria-controls="ticket" aria-label="About this map">i</button>
       </div>
-      <div class="ticket">
+      <div class="ticket" id="ticket">
         <div class="ticket-head"><span>Ticket</span><span>Paris &amp; La Défense</span></div>
         <p id="stats">Laying the cobblestones…</p>
         <div class="stripe" aria-hidden="true"></div>
@@ -61,7 +62,7 @@
         <button id="zoom-out" title="Zoom out (−)" aria-label="Zoom out">−</button>
       </div>
       <button id="painted" class="row" title="Painted map or plain 3D map (A)" aria-pressed="true" hidden><i style="--c: var(--m5)"></i>Painted</button>
-      <button id="home" class="row" title="Whole map (H)"><i class="home" style="--c: var(--m6)"></i>Whole map</button>
+      <button id="home" class="row" title="Whole map (H)"><i class="home" style="--c: var(--m6)"></i><svg class="fit" viewBox="0 0 16 16" aria-hidden="true"><path d="M1 5V1h4M11 1h4v4M15 11v4h-4M5 15H1v-4" /></svg>Whole map</button>
     </nav>
 
     <section class="card places" id="places">
@@ -111,7 +112,7 @@
     </div>
 
     <footer class="credit">
-      Drag to pan · scroll to zoom · click a building · data ©
+      <span class="hint">Drag to pan · scroll to zoom · click a building ·</span><span class="hint-touch">Pinch to zoom · tap a building<br /></span> data ©
       <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors,
       <a href="https://geoservices.ign.fr/bdtopo" target="_blank" rel="noopener">IGN BD TOPO</a> · models
       <a href="https://kenney.nl" target="_blank" rel="noopener">Kenney</a>

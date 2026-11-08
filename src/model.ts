@@ -614,6 +614,24 @@ export async function loadWorld(url: string, bdtopoUrl?: string, onProgress?: (f
     });
   };
 
+  // No cars in cemeteries: their alleys are mapped as roads.
+  const graveyards = raw.parks
+    .filter((p) => p.k === "cemetery")
+    .map((p) => {
+      const ring = Float64Array.from(p.r[0], (v) => v / k);
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (let i = 0; i < ring.length; i += 2) {
+        x0 = Math.min(x0, ring[i]), x1 = Math.max(x1, ring[i]);
+        y0 = Math.min(y0, ring[i + 1]), y1 = Math.max(y1, ring[i + 1]);
+      }
+      return { ring, x0, y0, x1, y1 };
+    });
+  const inGraveyard = (flat: Float64Array) => {
+    const n = flat.length / 2, m = Math.floor(n / 2) * 2;
+    const x = n % 2 ? flat[m] : (flat[m - 2] + flat[m]) / 2, y = n % 2 ? flat[m + 1] : (flat[m - 1] + flat[m + 1]) / 2;
+    return graveyards.some((g) => x > g.x0 && x < g.x1 && y > g.y0 && y < g.y1 && pointInRing(x, y, g.ring));
+  };
+
   const streets: Lane[] = [];
   const junctions = new Map<string, number[]>();
   for (const r of raw.roads) {
@@ -621,6 +639,7 @@ export async function loadWorld(url: string, bdtopoUrl?: string, onProgress?: (f
     await pace();
     const flat = Float64Array.from(r.p, (v) => v / k);
     if (r.k === "service" && throughBuilding(flat)) continue;
+    if (inGraveyard(flat)) continue;
     const lane = makeLane(flat, r.w / 2, MAJOR.has(r.k), r.k);
     if (lane.len < 1) continue;
     const id = streets.push(lane) - 1;

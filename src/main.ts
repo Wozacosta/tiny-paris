@@ -315,6 +315,16 @@ function fitBounds() {
   return { cx: (Math.max(...xs) + Math.min(...xs)) / 2, cy: (Math.max(...ys) + Math.min(...ys)) / 2 + 20, zoom: minZoom };
 }
 
+/** The first view. A phone held upright would show the whole map as a thin
+ *  strip, so it opens closer in, on central Paris. */
+function startView() {
+  const whole = fitBounds();
+  if (innerWidth > innerHeight * 0.8) return whole;
+  const [x, y] = frame0.project(2.3488, 48.8589);
+  const [cx, cy] = worldToIso(rotation, x, y);
+  return { cx, cy, zoom: whole.zoom * 2 };
+}
+
 const clampZoom = (z: number) => Math.min(MAX_ZOOM, Math.max(minZoom * 0.8, z));
 
 function zoomAt(factor: number, sx = innerWidth / 2, sy = innerHeight / 2) {
@@ -576,6 +586,12 @@ function setupInput() {
   $("report-view").onclick = () => openReport(null);
   $("report-close").onclick = () => ($("report").hidden = true);
   ($("report") as HTMLFormElement).onsubmit = sendReport;
+  // Phones show only the plaque; it opens the ticket.
+  $("title-more").onclick = () => {
+    const open = $("title-more").getAttribute("aria-expanded") !== "true";
+    $("title-more").setAttribute("aria-expanded", String(open));
+    document.querySelector(".title")!.classList.toggle("open", open);
+  };
   addEventListener("resize", resize);
 }
 
@@ -641,7 +657,7 @@ async function main() {
   [frame0, painted] = await Promise.all([loadFrame("/data/paris-meta.json"), PaintedLayer.load(() => requestPresent())]);
   $("painted").hidden = !painted;
   resize();
-  Object.assign(cam, fitBounds());
+  Object.assign(cam, startView());
   setupInput();
   setupLandmarks();
   // Labels are drawn on the canvas: redraw once the web fonts are in.
