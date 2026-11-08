@@ -92,7 +92,8 @@ const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models
 });
 const json = await res.json().catch(() => ({}));
 const u = json.usageMetadata;
-const eur = u ? ((u.promptTokenCount ?? 0) * RATE.input + ((u.candidatesTokenCount ?? 0) + (u.thoughtsTokenCount ?? 0)) * RATE.output) / 1e6 : WORST;
+// No usage means the call never ran (quota or rate limit), which isn't billed.
+const eur = u ? ((u.promptTokenCount ?? 0) * RATE.input + ((u.candidatesTokenCount ?? 0) + (u.thoughtsTokenCount ?? 0)) * RATE.output) / 1e6 : res.ok ? WORST : 0;
 spend.totalEur += eur;
 spend.calls.push({ id: `spot:${opt.name}`, model: opt.model, eur: Number(eur.toFixed(4)), at: new Date().toISOString() });
 await writeFile(SPEND_FILE, JSON.stringify(spend, null, 2));
