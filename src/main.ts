@@ -1,5 +1,5 @@
 import { inject } from "@vercel/analytics";
-import { loadTransit, loadWorld, type Building, type World } from "./model";
+import { loadFrame, loadTransit, loadWorld, type Building, type MapFrame, type World } from "./model";
 import { LANDMARKS } from "./landmarks";
 import { buildRotView, drawGround, drawHighlight, drawStructures, occluders, pick, worldToIso, type Camera, type Rotation, type RotView } from "./render";
 import { DAY, type Theme } from "./theme";
@@ -21,6 +21,10 @@ const canvas = $<HTMLCanvasElement>("map");
 const ctx = canvas.getContext("2d")!;
 
 let world: World;
+/** Where things are and the outline: known within a second, long before `world`. */
+let frame0: MapFrame;
+/** True once `world` and `traffic` exist; until then only the painting and labels show. */
+let ready = false;
 const views: RotView[] = [];
 // The one view angle, the one the AI painting was made for (north to the upper left).
 const rotation: Rotation = 3;
@@ -70,6 +74,7 @@ function requestRender(camera = false) {
 
 function frame() {
   frameQueued = false;
+  if (!ready) return preview();
   const moving = performance.now() - lastMove < 150;
   if (!snapCam || !moving || lastFullMs < 25 || snapshotStale(snapCam)) {
     fullRender();
@@ -185,6 +190,14 @@ function present() {
   drawLabels();
 }
 
+/** Before the city's data is in: just the painting and the labels. */
+function preview() {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (painted && showPainted) painted.draw(ctx, { ...cam, zoom: cam.zoom * res }, rotation);
+  drawLabels();
+}
+
 /** Map pins for landmarks, like the labels on a 3D map. */
 function drawLabels() {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -199,7 +212,7 @@ function drawLabels() {
     pin(p.x, p.y, p.z + 5, p.label, placed, theme.label, "#ffd27a");
   }
   for (const l of LANDMARKS) {
-    const [x, y] = world.project(l.lon, l.lat);
+    const [x, y] = frame0.project(l.lon, l.lat);
     pin(x, y, l.top ?? 26, l.name.toUpperCase(), placed, theme.label, theme.labelText);
   }
   ctx.letterSpacing = "0px";
@@ -238,6 +251,7 @@ function pin(x: number, y: number, h0: number, text: string, placed: [number, nu
 let presentQueued = false;
 /** Redraw highlights only, reusing the current snapshot. */
 function requestPresent() {
+  if (!ready) return requestRender();
   if (presentQueued || frameQueued || !snapCam) return;
   presentQueued = true;
   requestAnimationFrame(() => {
@@ -272,6 +286,7 @@ let following: number | null = null;
 let followZoom: number | null = null;
 
 function follow(kind: "bus" | "velib" | "truck" | null) {
+  if (!ready) return;
   following = kind ? traffic.pickToFollow(kind, false) : null;
   followZoom = following != null ? Math.max(cam.zoom, kind === "velib" ? 5 : 4) : null;
   if (following != null) flight++;
@@ -290,7 +305,7 @@ function resize() {
 }
 
 function fitBounds() {
-  const ring = world.boundary;
+  const ring = frame0.boundary;
   const pts = Array.from({ length: ring.length / 2 }, (_, k) => worldToIso(rotation, ring[k * 2], ring[k * 2 + 1]));
   const xs = pts.map((p) => p[0]);
   const ys = pts.map((p) => p[1]);
@@ -344,7 +359,7 @@ function flyToWorld(x: number, y: number, zoom: number, z = 0) {
 if (import.meta.env.DEV) {
   // For screenshots from scripts: jump straight to a place.
   (window as unknown as { __goto: unknown }).__goto = (lon: number, lat: number, zoom: number) => {
-    const [x, y] = world.project(lon, lat);
+    const [x, y] = frame0.project(lon, lat);
     [cam.cx, cam.cy] = worldToIso(rotation, x, y);
     cam.zoom = clampZoom(zoom);
     requestRender();
@@ -400,6 +415,7 @@ function showInfo(i: number | null) {
 }
 
 function wander() {
+  if (!ready) return;
   const named = world.buildings.map((b, i) => (b.info?.name ? i : -1)).filter((i) => i >= 0);
   const i = named[Math.floor(Math.random() * named.length)];
   const b = world.buildings[i];
@@ -445,7 +461,7 @@ function setupInput() {
       }
       return;
     }
-    if (e.pointerType !== "mouse") return;
+    if (e.pointerType !== "mouse" || !ready) return;
     const hit = pick(ctx, view(), ...screenToIso(e.clientX, e.clientY));
     canvas.classList.toggle("pointing", hit != null);
     if (hit !== state.hover) {
@@ -457,7 +473,7 @@ function setupInput() {
   const end = (e: PointerEvent) => {
     pointers.delete(e.pointerId);
     if (pointers.size < 2) pinch = null;
-    if (drag && !drag.moved && e.type === "pointerup") {
+    if (drag && !drag.moved && e.type === "pointerup" && ready) {
       showInfo(pick(ctx, view(), ...screenToIso(e.clientX, e.clientY)));
     }
     drag = null;
@@ -530,7 +546,7 @@ function setupLandmarks() {
     const btn = document.createElement("button");
     btn.innerHTML = `${l.name} <small>${l.note}</small>`;
     btn.onclick = () => {
-      const [x, y] = world.project(l.lon, l.lat);
+      const [x, y] = frame0.project(l.lon, l.lat);
       showInfo(null);
       follow(null);
       togglePlaces(false);
@@ -557,8 +573,29 @@ function showLoading(f: number | null) {
 inject();
 
 async function main() {
+  // The painting first: its manifest and the outline are a few kB, so the map
+  // shows in a second; the city's data (13 MB) follows for traffic and clicks.
+  [frame0, painted] = await Promise.all([loadFrame("/data/paris-meta.json"), PaintedLayer.load(() => requestPresent())]);
+  $("painted").hidden = !painted;
+  resize();
+  Object.assign(cam, fitBounds());
+  setupInput();
+  setupLandmarks();
+  // Labels are drawn on the canvas: redraw once the web fonts are in.
+  document.fonts.ready.then(() => requestPresent());
+  requestRender();
+  if (painted) {
+    // Let the first view's chunks have the connection to themselves.
+    await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
+    await Promise.race([painted.settled(), new Promise((r) => setTimeout(r, 4000))]);
+    showLoading(null);
+  }
+
   const [w, transit, pois] = await Promise.all([
-    loadWorld("/data/paris.json", "/data/paris-bdtopo.json", showLoading),
+    loadWorld("/data/paris.json", "/data/paris-bdtopo.json", (f) => {
+      if (!painted) return showLoading(f);
+      $("stats").textContent = f < 1 ? `Loading the streets · ${Math.round(f * 100)}%` : "Starting the traffic…";
+    }),
     loadTransit("/data/paris-transit.json"),
     fetch("/data/paris-pois.json").then((r) => (r.ok ? r.json() : { cafes: [] })).catch(() => ({ cafes: [] })),
   ]);
@@ -567,19 +604,12 @@ async function main() {
   if (new URLSearchParams(location.search).has("export")) installExport(world);
   traffic = new Traffic(world, transit);
   Sprites.load().then((sp) => traffic.setSprites(sp));
-  painted = await PaintedLayer.load(() => requestPresent());
-  $("painted").hidden = !painted;
   const n = traffic.count;
   const fmt = (v: number) => v.toLocaleString("en");
   $("stats").textContent =
     `${fmt(world.buildings.length)} buildings · ${fmt(n.cars)} cars · ${fmt(n.buses)} buses on ${n.lines} RATP lines · ` +
     `${fmt(n.bikes)} bikes · ${fmt(n.stations)} Vélib' stations · ${n.trucks} garbage trucks · ${n.trains} métros`;
-  resize();
-  Object.assign(cam, fitBounds());
-  setupInput();
-  setupLandmarks();
-  // Labels are drawn on the canvas: redraw once the web fonts are in.
-  document.fonts.ready.then(() => requestPresent());
+  ready = true;
   requestRender();
   requestAnimationFrame(tick);
   showLoading(null);

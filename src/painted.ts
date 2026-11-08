@@ -57,6 +57,14 @@ export class PaintedLayer {
     return got;
   }
 
+  /** Resolves once every chunk asked for so far has arrived. */
+  settled(): Promise<void> {
+    return new Promise((resolve) => {
+      const check = () => ([...this.chunks.values()].includes("loading") ? setTimeout(check, 50) : resolve());
+      check();
+    });
+  }
+
   /** Frees the chunks unused for longest, past KEEP, never those of this frame. */
   private evict() {
     const loaded = [...this.used].filter(([, f]) => f < this.frame).sort((a, b) => a[1] - b[1]);

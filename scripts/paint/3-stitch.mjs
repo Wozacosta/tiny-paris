@@ -8,11 +8,9 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { DIR, openBlankPage } from "./common.mjs";
 import { LANDMARKS, landmarkPixel, ownerTile } from "./landmarks.mjs";
+import { CHUNK, OUT, buildLevels } from "./levels.mjs";
 
 const { values: opt } = parseArgs({ options: { from: { type: "string", default: `${DIR}/painted-p` } } });
-const OUT = "public/painted";
-const CHUNK = 1024;
-const LEVELS = [1, 0.5, 0.25];
 
 const m = JSON.parse(await readFile(`${DIR}/manifest.json`, "utf8"));
 const have = new Set(m.tiles.map((t) => `${t.c}_${t.r}`).filter((id) => existsSync(`${opt.from}/${id}.png`)));
@@ -456,41 +454,10 @@ try {
   if (spots.length) console.log(`${spots.length} spot repaints`);
   console.log(`${(recoloured / 1e6).toFixed(1)} Mpx of brick recoloured to stone`);
 
-  // Coarser levels, each from the one below: 2×2 chunks into one.
-  const levels = [{ scale: LEVELS[0], chunks: level0 }];
-  for (let li = 1; li < LEVELS.length; li++) {
-    await mkdir(`${OUT}/${li}`, { recursive: true });
-    const below = new Set(levels[li - 1].chunks.map(([c, r]) => `${c}_${r}`));
-    const parents = new Set([...below].map((k) => k.split("_").map((v) => Math.floor(Number(v) / 2)).join("_")));
-    const chunks = [];
-    for (const key of parents) {
-      const [c, r] = key.split("_").map(Number);
-      const parts = [];
-      for (const [dc, dr] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
-        const k = `${c * 2 + dc}_${r * 2 + dr}`;
-        if (below.has(k)) parts.push({ dc, dr, data: (await readFile(`${OUT}/${li - 1}/${k}.webp`)).toString("base64") });
-      }
-      const url = await page.evaluate(async ({ parts, C }) => {
-        const t = document.createElement("canvas");
-        t.width = t.height = C;
-        const g = t.getContext("2d");
-        g.imageSmoothingQuality = "high";
-        for (const p of parts) {
-          const img = new Image();
-          img.src = `data:image/webp;base64,${p.data}`;
-          await img.decode();
-          g.drawImage(img, (p.dc * C) / 2, (p.dr * C) / 2, C / 2, C / 2);
-        }
-        return t.toDataURL("image/webp", 0.86);
-      }, { parts, C: CHUNK });
-      await writeFile(`${OUT}/${li}/${c}_${r}.webp`, Buffer.from(url.split(",")[1], "base64"));
-      chunks.push([c, r]);
-    }
-    levels.push({ scale: LEVELS[li], chunks });
-    console.log(`level ${li} (×${LEVELS[li]}): ${chunks.length} chunks`);
-  }
+  const levels = await buildLevels(page, level0);
 
-  const manifest = { rotation: m.rotation, zoom: m.zoom, origin: m.origin, chunk: CHUNK, levels, polygon: m.polygon, area: m.area };
+  // Only what the app reads: the area's outline stays in paint/manifest.json.
+  const manifest = { rotation: m.rotation, zoom: m.zoom, origin: m.origin, chunk: CHUNK, levels };
   await writeFile(`${OUT}/manifest.json`, JSON.stringify(manifest));
 } finally {
   await close();

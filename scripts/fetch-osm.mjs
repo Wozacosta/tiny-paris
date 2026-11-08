@@ -1,5 +1,6 @@
 // Builds Paris inside the périphérique from an OpenStreetMap extract and
-// writes a compact local-metre dataset to public/data/paris.json.
+// writes a compact local-metre dataset to public/data/paris.json, and its
+// origin and outline to public/data/paris-meta.json.
 //
 //   node scripts/fetch-osm.mjs
 //
@@ -183,6 +184,8 @@ for (const b of out.buildings) {
 await mkdir("public/data", { recursive: true });
 const json = JSON.stringify(out);
 await writeFile(`public/data/paris.json`, json);
+// The few kB the app needs to show the painting before the rest arrives.
+await writeFile(`public/data/paris-meta.json`, JSON.stringify({ origin: out.origin, scale: out.scale, boundary: out.boundary }));
 console.log(
   `wrote public/data/paris.json (${(json.length / 1e6).toFixed(1)} MB): ` +
     `${out.buildings.length} buildings, ${out.trees.length} trees, ${out.roads.length} roads, ` +

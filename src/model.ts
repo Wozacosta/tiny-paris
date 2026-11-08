@@ -419,6 +419,20 @@ async function fetchJson(url: string, expected: number, onProgress?: (f: number)
   return JSON.parse(new TextDecoder().decode(all));
 }
 
+/** What the map needs before its data arrives: where things are, and its outline. */
+export type MapFrame = Pick<World, "project" | "boundary">;
+
+/** public/data/paris-meta.json, from fetch-osm.mjs: a few kB instead of the city's 13 MB. */
+export async function loadFrame(url: string): Promise<MapFrame> {
+  const raw: { origin: { lon: number; lat: number }; scale: number; boundary: number[] } = await fetch(url).then((r) => r.json());
+  const R = 6378137;
+  const kx = (Math.PI / 180) * R * Math.cos((raw.origin.lat * Math.PI) / 180), ky = (Math.PI / 180) * R;
+  return {
+    project: (lon, lat) => [(lon - raw.origin.lon) * kx, -(lat - raw.origin.lat) * ky],
+    boundary: Float64Array.from(raw.boundary, (v) => v / raw.scale),
+  };
+}
+
 export async function loadWorld(url: string, bdtopoUrl?: string, onProgress?: (f: number) => void): Promise<World> {
   const [raw, bdRaw]: [Raw, { rows: BdRow[] } | null] = await Promise.all([
     fetchJson(url, 36.6e6, onProgress),
