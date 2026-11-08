@@ -45,7 +45,8 @@ export const LANDMARKS = [
   { name: "Cimetière du Père-Lachaise", lon: 2.3960, lat: 48.8605, look: "a wooded cemetery densely packed with stone tombs and small chapels along cobbled paths" },
 
   // The rest of Paris inside the périphérique.
-  { name: "Tour Eiffel", radius: 520, lon: 2.29448, lat: 48.85826, look: "the Eiffel Tower: a very tall wrought-iron lattice tower painted bronze-brown, standing on four curved splayed legs joined by great arches at the first level, tapering to a slender spire with a small top platform, with the open Champ de Mars lawns stretching away from it" },
+  // Spans two tiles: each paints its part, then a spot repaint draws it whole.
+  { name: "Tour Eiffel", tall: true, radius: 520, lon: 2.29448, lat: 48.85826, look: "the Eiffel Tower: a very tall wrought-iron lattice tower painted bronze-brown, standing on four curved splayed legs joined by great arches at the first level, tapering to a slender spire with a small top platform, with the open Champ de Mars lawns stretching away from it" },
   { name: "Arc de Triomphe", radius: 340, lon: 2.29504, lat: 48.87378, look: "the Arc de Triomphe: a massive pale limestone triumphal arch with one great arched opening on each side and large sculpted reliefs, standing alone in the middle of the huge round Place de l'Étoile, with twelve avenues radiating from it" },
   { name: "Cathédrale Notre-Dame de Paris", radius: 380, lon: 2.34990, lat: 48.85296, look: "Notre-Dame cathedral on its island: a Gothic cathedral of pale stone with two square towers on the west façade above three portals and a rose window, a long nave under a lead roof with a slender lead spire at the crossing, and flying buttresses all around the apse" },
   { name: "Sainte-Chapelle", lon: 2.34500, lat: 48.85540, look: "the Sainte-Chapelle: a tall narrow Gothic chapel of pale stone with huge stained-glass windows, a steep blue-grey slate roof and a slender gilded spire, inside the courtyard of the Palais de Justice" },
@@ -135,6 +136,7 @@ export function landmarksInTile(m, c, r) {
 /** Landmarks near this tile that another tile paints: this one must not draw them. */
 export function landmarksNearTile(m, c, r) {
   return LANDMARKS.filter((l) => {
+    if (l.tall) return false;
     const o = ownerTile(m, l);
     if (!o || (o.c === c && o.r === r)) return false;
     const [gx, gy] = landmarkPixel(m, l);

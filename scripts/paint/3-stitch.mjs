@@ -21,11 +21,17 @@ console.log(`${have.size}/${m.tiles.length} tiles from ${opt.from}`);
 
 const { page, close } = await openBlankPage();
 try {
-  await page.evaluate(({ w, h }) => {
-    const c = document.createElement("canvas");
-    c.width = w;
-    c.height = h;
-    window.mosaic = c;
+  await page.evaluate(() => {
+    // The mosaic is drawn in bands (a canvas for all of Paris is over
+    // Chrome's size limit): window.mosaic holds global rows from window.OY.
+    window.newBand = (w, h, oy) => {
+      if (window.mosaic) window.mosaic.width = window.mosaic.height = 0;
+      const c = document.createElement("canvas");
+      c.width = w;
+      c.height = h;
+      window.mosaic = c;
+      window.OY = oy;
+    };
 
     // Seams. Where two paintings overlap they rarely agree, and a crossfade
     // shows both at half strength (a ghost building inside another). Instead
@@ -102,7 +108,7 @@ try {
       const g = t.getContext("2d");
       g.globalCompositeOperation = "destination-in";
       g.drawImage(mask, 0, 0);
-      window.mosaic.getContext("2d").drawImage(t, x, y);
+      window.mosaic.getContext("2d").drawImage(t, x, y - window.OY);
     };
 
     // Tone matching. Each painting comes back a little lighter, darker or
@@ -156,9 +162,9 @@ try {
     // A tile cut against its left and top neighbours, which are already drawn.
     window.placeTile = async ({ data, x, y, T, O, left, top }) => {
       const t = await load(data, T);
-      if (!left && !top) return window.mosaic.getContext("2d").drawImage(t, x, y);
+      if (!left && !top) return window.mosaic.getContext("2d").drawImage(t, x, y - window.OY);
       const a = t.getContext("2d").getImageData(0, 0, T, T).data;
-      const b = window.mosaic.getContext("2d", { willReadFrequently: true }).getImageData(x, y, T, T).data;
+      const b = window.mosaic.getContext("2d", { willReadFrequently: true }).getImageData(x, y - window.OY, T, T).data;
       matchTone(t, a, b, T, O, left, top);
       const d = diff(a, b, T, true);
       const strip = (vertical) => {
@@ -179,7 +185,7 @@ try {
     window.placeLandmark = async ({ data, x, y, T, cx, cy, R }) => {
       const t = await load(data, T);
       const a = t.getContext("2d").getImageData(0, 0, T, T).data;
-      const b = window.mosaic.getContext("2d", { willReadFrequently: true }).getImageData(x, y, T, T).data;
+      const b = window.mosaic.getContext("2d", { willReadFrequently: true }).getImageData(x, y - window.OY, T, T).data;
       const px = cx - x, py = cy - y, rIn = Math.round(R * 0.55);
       // Match its tone to the surroundings: mean colour difference over the ring it's cut in.
       {
@@ -246,7 +252,7 @@ try {
       g.fill();
       place(t, m, x, y);
     };
-  }, { w: m.width, h: m.height });
+  });
 
   // How much of each tile's base is actual map (not plain off-map ground).
   const coverage = new Map();
@@ -275,87 +281,108 @@ try {
   const byRaster = (a, b) => a[1] - b[1] || a[0] - b[0];
   const ids = (set) => [...set].map((id) => id.split("_").map(Number)).sort(byRaster);
   const order = [...ids(new Set([...have].filter(isEdge))), ...ids(core)];
-  for (const [c, r] of order) {
-    const edge = isEdge(`${c}_${r}`);
-    const data = (await readFile(`${opt.from}/${c}_${r}.png`)).toString("base64");
-    await page.evaluate(
-      (args) => window.placeTile(args),
-      {
-        data, x: c * m.step, y: r * m.step, T: m.tile, O: m.overlap,
-        left: !edge && core.has(`${c - 1}_${r}`), top: !edge && core.has(`${c}_${r - 1}`),
-      },
-    );
-    process.stdout.write(".");
-  }
-
-  // Each landmark comes from its owner tile only: redraw that tile over the
-  // landmark's surroundings so a neighbour's version can't ghost through.
-  for (const l of LANDMARKS) {
-    const o = ownerTile(m, l);
-    if (!o || !have.has(`${o.c}_${o.r}`)) continue;
-    const [gx, gy] = landmarkPixel(m, l);
-    // A landmark can have its own repaint of the owner tile (paint/landmarks/<slug>.png),
-    // used only around it, so fixing one landmark doesn't disturb its neighbours.
-    const own = l.slug && existsSync(`${DIR}/landmarks/${l.slug}.png`) ? `${DIR}/landmarks/${l.slug}.png` : `${opt.from}/${o.c}_${o.r}.png`;
-    const data = (await readFile(own)).toString("base64");
-    await page.evaluate((args) => window.placeLandmark(args), { data, x: o.c * m.step, y: o.r * m.step, T: m.tile, cx: gx, cy: gy, R: l.radius ?? 260 });
-  }
-
-  // Spot fixes (paint/patches.json): a corrected repaint of one tile, used only
-  // in a cut-out around each mistake it fixes, so the rest keeps the original.
+  const landmarks = LANDMARKS.map((l) => ({ l, o: ownerTile(m, l) })).filter(({ o }) => o && have.has(`${o.c}_${o.r}`));
   const patches = existsSync(`${DIR}/patches.json`) ? JSON.parse(await readFile(`${DIR}/patches.json`, "utf8")) : [];
-  for (const p of patches) {
-    const [c, r] = p.tile.split("_").map(Number);
-    const data = (await readFile(`${DIR}/${p.from}/${p.tile}.png`)).toString("base64");
-    const x = c * m.step, y = r * m.step;
-    await page.evaluate((args) => window.placeLandmark(args), {
-      data, x, y, T: m.tile, cx: x + (p.x / 100) * m.tile, cy: y + (p.y / 100) * m.tile, R: p.r,
-    });
-  }
-  if (patches.length) console.log(`\n${patches.length} spot fixes`);
-
-  // Spot repaints (paint/spots.json, from spot.mjs): crops of the painting
-  // centred on one thing, pasted last.
   const spots = existsSync(`${DIR}/spots.json`) ? JSON.parse(await readFile(`${DIR}/spots.json`, "utf8")) : [];
-  for (const s of spots) {
-    const data = (await readFile(`${DIR}/spots/${s.name}.png`)).toString("base64");
-    await page.evaluate((args) => window.placeLandmark(args), {
-      data, x: s.x - s.size / 2, y: s.y - s.size / 2, T: s.size, cx: s.x, cy: s.y, R: s.r,
-    });
-  }
-  if (spots.length) console.log(`${spots.length} spot repaints`);
+
+  await rm(OUT, { recursive: true, force: true });
+  await mkdir(`${OUT}/0`, { recursive: true });
+  const level0 = [];
+  let recoloured = 0;
+
+  // Bands of BAND rows of the mosaic. Each also draws the two tile rows above
+  // it (which its top row is cut and tone-matched against) and one below
+  // (which draws over its bottom overlap), but keeps only its own rows.
+  const BAND = 2 * CHUNK;
+  for (let Y0 = 0; Y0 < m.height; Y0 += BAND) {
+    const Y1 = Math.min(m.height, Y0 + BAND);
+    const rFirst = Math.max(0, Math.floor(Y0 / m.step) - 2);
+    const rLast = Math.floor((Y1 - 1) / m.step) + 1;
+    const OYb = rFirst * m.step, Hb = Math.min(m.height, (rLast + 1) * m.step + m.overlap) - OYb;
+    await page.evaluate(({ w, h, oy }) => window.newBand(w, h, oy), { w: m.width, h: Hb, oy: OYb });
+
+    for (const [c, r] of order) {
+      if (r < rFirst || r > rLast) continue;
+      const edge = isEdge(`${c}_${r}`);
+      const data = (await readFile(`${opt.from}/${c}_${r}.png`)).toString("base64");
+      await page.evaluate(
+        (args) => window.placeTile(args),
+        {
+          data, x: c * m.step, y: r * m.step, T: m.tile, O: m.overlap,
+          left: !edge && core.has(`${c - 1}_${r}`), top: !edge && core.has(`${c}_${r - 1}`),
+        },
+      );
+      process.stdout.write(".");
+    }
+    const touches = (yTop, yBottom) => yBottom > OYb && yTop < OYb + Hb;
+
+    // Each landmark comes from its owner tile only: redraw that tile over the
+    // landmark's surroundings so a neighbour's version can't ghost through.
+    for (const { l, o } of landmarks) {
+      if (!touches(o.r * m.step, o.r * m.step + m.tile)) continue;
+      const [gx, gy] = landmarkPixel(m, l);
+      // A landmark can have its own repaint of the owner tile (paint/landmarks/<slug>.png),
+      // used only around it, so fixing one landmark doesn't disturb its neighbours.
+      const own = l.slug && existsSync(`${DIR}/landmarks/${l.slug}.png`) ? `${DIR}/landmarks/${l.slug}.png` : `${opt.from}/${o.c}_${o.r}.png`;
+      const data = (await readFile(own)).toString("base64");
+      await page.evaluate((args) => window.placeLandmark(args), { data, x: o.c * m.step, y: o.r * m.step, T: m.tile, cx: gx, cy: gy, R: l.radius ?? 260 });
+    }
+
+    // Spot fixes (paint/patches.json): a corrected repaint of one tile, used only
+    // in a cut-out around each mistake it fixes, so the rest keeps the original.
+    for (const p of patches) {
+      const [c, r] = p.tile.split("_").map(Number);
+      const x = c * m.step, y = r * m.step;
+      if (!touches(y, y + m.tile)) continue;
+      const data = (await readFile(`${DIR}/${p.from}/${p.tile}.png`)).toString("base64");
+      await page.evaluate((args) => window.placeLandmark(args), {
+        data, x, y, T: m.tile, cx: x + (p.x / 100) * m.tile, cy: y + (p.y / 100) * m.tile, R: p.r,
+      });
+    }
+
+    // Spot repaints (paint/spots.json, from spot.mjs): crops of the painting
+    // centred on one thing, pasted last.
+    for (const sp of spots) {
+      if (!touches(sp.y - sp.size / 2, sp.y + sp.size / 2)) continue;
+      const data = (await readFile(`${DIR}/spots/${sp.name}.png`)).toString("base64");
+      await page.evaluate((args) => window.placeLandmark(args), {
+        data, x: sp.x - sp.size / 2, y: sp.y - sp.size / 2, T: sp.size, cx: sp.x, cy: sp.y, R: sp.r,
+      });
+    }
 
   // Brick that shouldn't be: red walls on buildings the data says aren't
   // brick (paint/stonemask, from 1-base.mjs --mask) become cream stone,
   // keeping the painting's shading and windows. Roofs aren't touched.
+  // Tile by tile: a mosaic-sized mask canvas doesn't fit in memory for all
+  // of Paris. Overlaps are recoloured twice, which changes nothing the
+  // second time since the brick is gone.
   if (existsSync(`${DIR}/stonemask`)) {
-    await page.evaluate(({ w, h }) => {
-      window.stoneMask = document.createElement("canvas");
-      window.stoneMask.width = w;
-      window.stoneMask.height = h;
-    }, { w: m.width, h: m.height });
+    let n = 0;
     for (const { c, r } of m.tiles) {
-      const data = (await readFile(`${DIR}/stonemask/${c}_${r}.png`)).toString("base64");
-      await page.evaluate(async ({ data, x, y }) => {
+      if (r < rFirst || r > rLast) continue;
+      const file = `${DIR}/stonemask/${c}_${r}.png`;
+      if (!existsSync(file)) continue;
+      const data = (await readFile(file)).toString("base64");
+      n += await page.evaluate(async ({ data, x, y, T }) => {
         const img = new Image();
         img.src = `data:image/png;base64,${data}`;
         await img.decode();
-        window.stoneMask.getContext("2d").drawImage(img, x, y);
-      }, { data, x: c * m.step, y: r * m.step });
-    }
-    const n = await page.evaluate(({ w, h }) => {
-      const B = 1024;
-      const mg = window.mosaic.getContext("2d", { willReadFrequently: true });
-      const kg = window.stoneMask.getContext("2d", { willReadFrequently: true });
-      // Cream stone, lit and shaded faces averaged; brick's own brightness maps onto it.
-      const STONE = [236, 222, 193], BRICK_LUM = 118;
-      let changed = 0;
-      for (let y = 0; y < h; y += B) for (let x = 0; x < w; x += B) {
-        const bw = Math.min(B, w - x), bh = Math.min(B, h - y);
-        const img = mg.getImageData(x, y, bw, bh), a = img.data;
-        const k = kg.getImageData(x, y, bw, bh).data;
-        for (let i = 0; i < a.length; i += 4) {
-          if (k[i] < 128 || !a[i + 3]) continue;
+        const kc = document.createElement("canvas");
+        kc.width = kc.height = T;
+        const kg = kc.getContext("2d", { willReadFrequently: true });
+        kg.drawImage(img, 0, 0);
+        const k = kg.getImageData(0, 0, T, T).data;
+        const mg = window.mosaic.getContext("2d", { willReadFrequently: true });
+        const ly = y - window.OY;
+        if (ly >= window.mosaic.height || ly + T <= 0) return 0;
+        const bw = Math.min(T, window.mosaic.width - x), bh = T;
+        const im = mg.getImageData(x, ly, bw, bh), a = im.data;
+        // Cream stone, lit and shaded faces averaged; brick's own brightness maps onto it.
+        const STONE = [236, 222, 193], BRICK_LUM = 118;
+        let changed = 0;
+        for (let yy = 0; yy < bh; yy++) for (let xx = 0; xx < bw; xx++) {
+          const i = (yy * bw + xx) * 4, q = (yy * T + xx) * 4;
+          if (k[q] < 128 || !a[i + 3]) continue;
           const R = a[i], G = a[i + 1], Bl = a[i + 2];
           // Brick red to brown: red well above green, green above or near blue.
           if (!(R - G > 28 && R - Bl > 40 && G >= Bl - 12 && R > 70)) continue;
@@ -364,62 +391,102 @@ try {
           a[i] = STONE[0] * f; a[i + 1] = STONE[1] * f; a[i + 2] = STONE[2] * f;
           changed++;
         }
-        mg.putImageData(img, x, y);
-      }
-      return changed;
-    }, { w: m.width, h: m.height });
-    console.log(`\n${(n / 1e6).toFixed(1)} Mpx of brick recoloured to stone`);
+        mg.putImageData(im, x, ly);
+        return changed;
+      }, { data, x: c * m.step, y: r * m.step, T: m.tile });
+    }
+    recoloured += n;
   }
 
   // Keep only the area itself, fading out over the last stretch of its edge
-  // so it blends into the live map around it.
+  // so it blends into the live map around it. Applied in bands, with a
+  // margin for the blur, since a mosaic-sized mask doesn't fit in memory.
   await page.evaluate(({ poly, ox, oy, Z, FEATHER }) => {
-    const mask = document.createElement("canvas");
-    mask.width = window.mosaic.width;
-    mask.height = window.mosaic.height;
-    const mg = mask.getContext("2d");
-    mg.filter = `blur(${FEATHER / 2}px)`;
+    const W = window.mosaic.width, H = window.mosaic.height, BAND = 2048, M = FEATHER;
     // Shrink the outline toward its centre so the fade stays inside it.
     const cx = poly.reduce((a, p) => a + p[0], 0) / poly.length, cy = poly.reduce((a, p) => a + p[1], 0) / poly.length;
-    mg.beginPath();
-    poly.forEach(([x, y], i) => {
+    const pts = poly.map(([x, y]) => {
       const d = Math.hypot(x - cx, y - cy), k = Math.max(0, 1 - FEATHER / Z / d);
-      (i ? mg.lineTo : mg.moveTo).call(mg, (cx + (x - cx) * k - ox) * Z, (cy + (y - cy) * k - oy) * Z);
+      return [(cx + (x - cx) * k - ox) * Z, (cy + (y - cy) * k - oy) * Z - window.OY];
     });
-    mg.closePath();
-    mg.fill();
     const g = window.mosaic.getContext("2d");
-    g.globalCompositeOperation = "destination-in";
-    g.drawImage(mask, 0, 0);
+    for (let y0 = 0; y0 < H; y0 += BAND) {
+      const bh = Math.min(BAND, H - y0);
+      const mask = document.createElement("canvas");
+      mask.width = W;
+      mask.height = bh + 2 * M;
+      const mg = mask.getContext("2d");
+      mg.filter = `blur(${FEATHER / 2}px)`;
+      mg.beginPath();
+      pts.forEach(([x, y], i) => (i ? mg.lineTo : mg.moveTo).call(mg, x, y - y0 + M));
+      mg.closePath();
+      mg.fill();
+      g.save();
+      g.beginPath();
+      g.rect(0, y0, W, bh);
+      g.clip();
+      g.globalCompositeOperation = "destination-in";
+      g.drawImage(mask, 0, y0 - M);
+      g.restore();
+    }
   }, { poly: m.polygon, ox: m.origin[0], oy: m.origin[1], Z: m.zoom, FEATHER: 160 });
 
-  await rm(OUT, { recursive: true, force: true });
-  const levels = [];
-  for (const [li, scale] of LEVELS.entries()) {
-    await mkdir(`${OUT}/${li}`, { recursive: true });
-    const w = Math.ceil(m.width * scale), h = Math.ceil(m.height * scale);
-    const cols = Math.ceil(w / CHUNK), rows = Math.ceil(h / CHUNK);
-    const chunks = [];
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        const url = await page.evaluate(({ c, r, s, C }) => {
+    // This band's own chunks.
+    for (let r = Y0 / CHUNK; r < Math.ceil(Y1 / CHUNK); r++) {
+      for (let c = 0; c < Math.ceil(m.width / CHUNK); c++) {
+        const url = await page.evaluate(({ c, r, C }) => {
           const t = document.createElement("canvas");
           t.width = t.height = C;
           const g = t.getContext("2d");
-          g.imageSmoothingQuality = "high";
-          g.drawImage(window.mosaic, (c * C) / s, (r * C) / s, C / s, C / s, 0, 0, C, C);
+          g.drawImage(window.mosaic, c * C, r * C - window.OY, C, C, 0, 0, C, C);
           // Skip chunks with nothing in them.
           const a = g.getImageData(0, 0, C, C).data;
           for (let i = 3; i < a.length; i += 64) if (a[i]) return t.toDataURL("image/webp", 0.86);
           return null;
-        }, { c, r, s: scale, C: CHUNK });
+        }, { c, r, C: CHUNK });
         if (!url) continue;
-        await writeFile(`${OUT}/${li}/${c}_${r}.webp`, Buffer.from(url.split(",")[1], "base64"));
-        chunks.push([c, r]);
+        await writeFile(`${OUT}/0/${c}_${r}.webp`, Buffer.from(url.split(",")[1], "base64"));
+        level0.push([c, r]);
       }
     }
-    levels.push({ scale, chunks });
-    console.log(`\nlevel ${li} (×${scale}): ${chunks.length} chunks`);
+    console.log(`\nband ${Y0}–${Y1}: ${level0.length} chunks so far`);
+  }
+  if (patches.length) console.log(`${patches.length} spot fixes`);
+  if (spots.length) console.log(`${spots.length} spot repaints`);
+  console.log(`${(recoloured / 1e6).toFixed(1)} Mpx of brick recoloured to stone`);
+
+  // Coarser levels, each from the one below: 2×2 chunks into one.
+  const levels = [{ scale: LEVELS[0], chunks: level0 }];
+  for (let li = 1; li < LEVELS.length; li++) {
+    await mkdir(`${OUT}/${li}`, { recursive: true });
+    const below = new Set(levels[li - 1].chunks.map(([c, r]) => `${c}_${r}`));
+    const parents = new Set([...below].map((k) => k.split("_").map((v) => Math.floor(Number(v) / 2)).join("_")));
+    const chunks = [];
+    for (const key of parents) {
+      const [c, r] = key.split("_").map(Number);
+      const parts = [];
+      for (const [dc, dr] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+        const k = `${c * 2 + dc}_${r * 2 + dr}`;
+        if (below.has(k)) parts.push({ dc, dr, data: (await readFile(`${OUT}/${li - 1}/${k}.webp`)).toString("base64") });
+      }
+      const url = await page.evaluate(async ({ parts, C }) => {
+        const t = document.createElement("canvas");
+        t.width = t.height = C;
+        const g = t.getContext("2d");
+        g.imageSmoothingQuality = "high";
+        for (const p of parts) {
+          const img = new Image();
+          img.src = `data:image/webp;base64,${p.data}`;
+          await img.decode();
+          g.drawImage(img, (p.dc * C) / 2, (p.dr * C) / 2, C / 2, C / 2);
+        }
+        return t.toDataURL("image/webp", 0.86);
+      }, { parts, C: CHUNK });
+      await writeFile(`${OUT}/${li}/${c}_${r}.webp`, Buffer.from(url.split(",")[1], "base64"));
+      chunks.push([c, r]);
+    }
+    levels.push({ scale: LEVELS[li], chunks });
+    console.log(`level ${li} (×${LEVELS[li]}): ${chunks.length} chunks`);
   }
 
   const manifest = { rotation: m.rotation, zoom: m.zoom, origin: m.origin, chunk: CHUNK, levels, polygon: m.polygon, area: m.area };
