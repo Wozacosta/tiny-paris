@@ -6,12 +6,14 @@ import {
   Z, buildRotView, depthOf, drawGround, drawStructures, isoToWorld, worldToIso,
   type Extra, type Photo, type RoofShape, type Rotation, type RotView,
 } from "./render";
-import { box, sample } from "./shapes";
+import { box, hull, poly, sample } from "./shapes";
 import { DAY } from "./theme";
 
 export interface TinyExport {
   /** Iso-space corners of a lon/lat box at ground level, for a view rotation. */
   corners(r: Rotation, w: number, s: number, e: number, n: number): [number, number][];
+  /** The map's outline in iso space at ground level, for a view rotation. */
+  outline(r: Rotation): [number, number][];
   /**
    * PNG data URL of the day map (no traffic, labels or UI) for one camera.
    * If the aerial data is downloaded (scripts/paint/0-ortho.mjs, 0-eaves.mjs),
@@ -54,6 +56,44 @@ function viaductPieces(world: World, r: Rotation): Extra[] {
     }
   }
   return out;
+}
+
+/**
+ * The Eiffel Tower as a rough 3D shape for the painter to follow: four
+ * splayed legs up to the first platform, a tapering shaft to the third, and
+ * the antenna, in the tower's bronze.
+ */
+function eiffelPieces(world: World, r: Rotation): Extra[] {
+  const b = world.buildings.find((x) => x.info?.name === "Tour Eiffel");
+  if (!b) return [];
+  const { cx, cy } = b;
+  // Axis-aligned frustum: square of half-size a at z0 to half-size c at z1.
+  const frustum = (ctx: CanvasRenderingContext2D, x: number, y: number, z0: number, z1: number, a: number, c: number, side: string, top: string | null) => {
+    const sq = (h: number, z: number) => [[-h, -h], [h, -h], [h, h], [-h, h]].map(([dx, dy]) => worldToIso(r, x + dx, y + dy, z));
+    const lo = sq(a, z0), hi = sq(c, z1);
+    poly(ctx, hull([...lo, ...hi]), side);
+    if (top) poly(ctx, hi, top);
+  };
+  const BRONZE = "#6e5a45", LIT = "#8a7258", DARK = "#4f4033";
+  const draw = (ctx: CanvasRenderingContext2D) => {
+    // Legs: from the corners of the 125 m base inward to the first platform.
+    for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      for (let k = 0; k < 6; k++) {
+        const z0 = (k / 6) * 57, z1 = ((k + 1) / 6) * 57;
+        const off = (z: number) => 50 - (z / 57) * 22 - Math.sin((z / 57) * Math.PI) * 4;
+        const w = (z: number) => 13 - (z / 57) * 4;
+        const mid = (z0 + z1) / 2;
+        frustum(ctx, cx + sx * off(mid), cy + sy * off(mid), z0, z1, w(z0), w(z1), k % 2 ? BRONZE : DARK, null);
+      }
+    }
+    frustum(ctx, cx, cy, 55, 59, 36, 36, DARK, LIT); // first platform
+    frustum(ctx, cx, cy, 59, 113, 30, 17, BRONZE, null);
+    frustum(ctx, cx, cy, 113, 117, 20, 20, DARK, LIT); // second platform
+    frustum(ctx, cx, cy, 117, 274, 15, 5, BRONZE, null);
+    frustum(ctx, cx, cy, 274, 280, 7, 7, DARK, LIT); // top platform
+    frustum(ctx, cx, cy, 280, 325, 2.5, 0.6, BRONZE, null); // antenna
+  };
+  return [{ depth: depthOf(r, cx, cy), draw }];
 }
 
 /** paint/ortho/index.json, from scripts/paint/0-ortho.mjs. */
@@ -153,6 +193,7 @@ async function aerialFor(world: World, r: Rotation, cx: number, cy: number, zoom
 
   const roofShape: RoofShape = (ctx, idx, z, ox, oy, walls) => {
     const b = world.buildings[idx];
+    if (b.info?.name === "Tour Eiffel") return;
     const eave = b.h;
     const o = b.rings[0];
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -407,6 +448,8 @@ async function eaveWorld(world: World): Promise<World | null> {
   if (!eaves) return null;
   const buildings = world.buildings.map((b, i): Building => {
     const e = eaves[i] / 10;
+    // The Eiffel Tower's LiDAR is a lattice: it gets its own shape instead.
+    if (b.info?.name === "Tour Eiffel") return b;
     return e > 0 ? { ...b, h: e, mansard: 0, domes: [] } : b;
   });
   return { ...world, buildings };
@@ -422,6 +465,10 @@ export function installExport(world: World) {
         const [x, y] = world.project(lon, lat);
         return worldToIso(r, x, y);
       });
+    },
+    outline(r) {
+      const b = world.boundary;
+      return Array.from({ length: b.length / 2 }, (_, k) => worldToIso(r, b[k * 2], b[k * 2 + 1]));
     },
     stoneMask(r, cx, cy, zoom, width, height) {
       const view = (views[r] ??= buildRotView(world, r));
@@ -460,7 +507,7 @@ export function installExport(world: World) {
       const cam = { cx, cy, zoom };
       const air = aerial ? await aerialFor(w, r, cx, cy, zoom, width, height) : undefined;
       drawGround(ground.getContext("2d")!, w, view, cam, DAY, 1, air?.photo);
-      drawStructures(build.getContext("2d")!, w, view, cam, DAY, 1, air?.photo, w === world ? undefined : air?.roofShape, viaductPieces(w, r));
+      drawStructures(build.getContext("2d")!, w, view, cam, DAY, 1, air?.photo, w === world ? undefined : air?.roofShape, [...viaductPieces(w, r), ...eiffelPieces(w, r)]);
       const ctx = out.getContext("2d")!;
       ctx.fillStyle = DAY.ground;
       ctx.fillRect(0, 0, width, height);

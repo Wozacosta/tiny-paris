@@ -108,7 +108,7 @@ export const DAY: Theme = {
   carGlass: "#3b4a5c",
   headlight: null,
   taillight: null,
-  label: "rgba(38, 38, 48, 0.88)",
+  label: "#1f2c6b",
   labelText: "#ffffff",
 };
 
@@ -162,6 +162,6 @@ export const NIGHT: Theme = {
   carGlass: "#1d2233",
   headlight: "#fff3c4",
   taillight: "#ff4a3d",
-  label: "rgba(12, 14, 30, 0.88)",
-  labelText: "#f6e9c8",
+  label: "#1f2c6b",
+  labelText: "#f6eed8",
 };

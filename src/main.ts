@@ -171,7 +171,8 @@ function present() {
 /** Map pins for landmarks, like the labels on a 3D map. */
 function drawLabels() {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.font = `600 ${12 * res}px Figtree, system-ui, sans-serif`;
+  ctx.font = `600 ${13 * res}px "Barlow Condensed", system-ui, sans-serif`;
+  ctx.letterSpacing = `${0.6 * res}px`;
   ctx.textBaseline = "middle";
   ctx.textAlign = "center";
   // The followed vehicle's tag wins; then earlier landmarks over later ones.
@@ -182,8 +183,9 @@ function drawLabels() {
   }
   for (const l of LANDMARKS) {
     const [x, y] = world.project(l.lon, l.lat);
-    pin(x, y, l.top ?? 26, l.name, placed, theme.label, theme.labelText);
+    pin(x, y, l.top ?? 26, l.name.toUpperCase(), placed, theme.label, theme.labelText);
   }
+  ctx.letterSpacing = "0px";
 }
 
 /** One map pin, skipped if it would overlap a pin already placed. */
@@ -193,21 +195,27 @@ function pin(x: number, y: number, h0: number, text: string, placed: [number, nu
   const sx = (ix - cam.cx) * z + canvas.width / 2;
   const sy = (iy - cam.cy) * z + canvas.height / 2;
   if (sx < -100 || sy < -40 || sx > canvas.width + 100 || sy > canvas.height + 40) return;
-  const w = ctx.measureText(text).width + 16 * res;
+  const w = ctx.measureText(text).width + 18 * res;
   const h = 22 * res;
   const top = sy - h - 6 * res;
   const box: [number, number, number, number] = [sx - w / 2, top, sx + w / 2, top + h];
   if (placed.some((p) => box[0] < p[2] + 4 && box[2] > p[0] - 4 && box[1] < p[3] + 4 && box[3] > p[1] - 4)) return;
   placed.push(box);
+  // An enamel station plate: dark blue, a thin white line inside its edge.
   ctx.fillStyle = bg;
   ctx.beginPath();
-  ctx.roundRect(sx - w / 2, top, w, h, 7 * res);
-  ctx.moveTo(sx - 5 * res, top + h);
+  ctx.roundRect(sx - w / 2, top, w, h, 3 * res);
+  ctx.moveTo(sx - 4 * res, top + h);
   ctx.lineTo(sx, top + h + 6 * res);
-  ctx.lineTo(sx + 5 * res, top + h);
+  ctx.lineTo(sx + 4 * res, top + h);
   ctx.fill();
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.85)";
+  ctx.lineWidth = res;
+  ctx.beginPath();
+  ctx.roundRect(sx - w / 2 + 2.5 * res, top + 2.5 * res, w - 5 * res, h - 5 * res, 1.5 * res);
+  ctx.stroke();
   ctx.fillStyle = fg;
-  ctx.fillText(text, sx, top + h / 2 + res);
+  ctx.fillText(text, sx, top + h / 2 + 0.5 * res);
 }
 
 let presentQueued = false;
@@ -266,14 +274,14 @@ function resize() {
 }
 
 function fitBounds() {
-  const { W, H } = world;
-  const pts = [[-W / 2, -H / 2], [W / 2, -H / 2], [W / 2, H / 2], [-W / 2, H / 2]].map(([x, y]) => worldToIso(rotation, x, y));
+  const ring = world.boundary;
+  const pts = Array.from({ length: ring.length / 2 }, (_, k) => worldToIso(rotation, ring[k * 2], ring[k * 2 + 1]));
   const xs = pts.map((p) => p[0]);
   const ys = pts.map((p) => p[1]);
   const bw = Math.max(...xs) - Math.min(...xs);
   const bh = Math.max(...ys) - Math.min(...ys) + 120;
   minZoom = Math.min(innerWidth / bw, innerHeight / bh) * 0.9;
-  return { cx: 0, cy: 20, zoom: minZoom };
+  return { cx: (Math.max(...xs) + Math.min(...xs)) / 2, cy: (Math.max(...ys) + Math.min(...ys)) / 2 + 20, zoom: minZoom };
 }
 
 const clampZoom = (z: number) => Math.min(MAX_ZOOM, Math.max(minZoom * 0.8, z));
@@ -536,9 +544,9 @@ function setupLandmarks() {
 
 async function main() {
   const [w, transit, pois] = await Promise.all([
-    loadWorld("/data/northeast.json", "/data/northeast-bdtopo.json"),
-    loadTransit("/data/northeast-transit.json"),
-    fetch("/data/northeast-pois.json").then((r) => (r.ok ? r.json() : { cafes: [] })).catch(() => ({ cafes: [] })),
+    loadWorld("/data/paris.json", "/data/paris-bdtopo.json"),
+    loadTransit("/data/paris-transit.json"),
+    fetch("/data/paris-pois.json").then((r) => (r.ok ? r.json() : { cafes: [] })).catch(() => ({ cafes: [] })),
   ]);
   transit.cafes = (pois.cafes as [number, number, number, number][]).map(([x, y, kind, out]) => [x / 10, y / 10, kind, out]);
   world = w;
@@ -556,6 +564,8 @@ async function main() {
   Object.assign(cam, fitBounds());
   setupInput();
   setupLandmarks();
+  // Labels are drawn on the canvas: redraw once the web fonts are in.
+  document.fonts.ready.then(() => requestPresent());
   requestRender();
   requestAnimationFrame(tick);
 }

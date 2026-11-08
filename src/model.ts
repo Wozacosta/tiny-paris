@@ -1,5 +1,5 @@
 // Loads the OSM-derived dataset and turns it into world geometry in metres.
-// World axes: x = east, y = south, origin at the bbox centre.
+// World axes: x = east, y = south, in metres from a fixed origin (raw.origin).
 
 export interface Info {
   name?: string;
@@ -22,7 +22,11 @@ interface RawBuilding {
 
 interface Raw {
   bbox: { s: number; w: number; n: number; e: number };
-  size: [number, number];
+  origin: { lon: number; lat: number };
+  /** World extent in metres: [x0, y0, x1, y1]. */
+  bounds: [number, number, number, number];
+  /** The map's outline, flat [x, y, ...] in world units (×scale). */
+  boundary: number[];
   scale: number;
   buildings: RawBuilding[];
   water: number[][][];
@@ -88,13 +92,19 @@ export interface Dome {
 }
 
 export interface World {
-  W: number;
-  H: number;
+  /** World extent in metres: [x0, y0, x1, y1]. */
+  bounds: [number, number, number, number];
+  /** The map's outline in metres, flat [x, y, ...]. */
+  boundary: Float64Array;
+  /** Whether a point is inside the outline (`margin` metres in, if given). */
+  onMap(x: number, y: number, margin?: number): boolean;
   buildings: Building[];
   trees: Float64Array;
   ground: {
     slab: Path2D; parks: Path2D; pitches: Path2D; cemeteries: Path2D; water: Path2D; bridges: Path2D;
-    treeShadows: Path2D; shadows: Path2D;
+    treeShadows: Path2D;
+    /** Building shadows per 500 m cell (one huge Path2D gets very slow to build). */
+    shadows: { x: number; y: number; path: Path2D }[];
   };
   roads: { width: number; color: RoadColor; path: Path2D }[];
   streets: Lane[];
@@ -134,6 +144,9 @@ const HEIGHT_OVERRIDES: Record<string, number> = {
   "Église Saint-Vincent-de-Paul": 36,
   // The painting draws the whole mill with its sails over this little base.
   "Moulin de la Galette": 14,
+  // An open lattice, not a 330 m block: the base render draws its shape
+  // (export.ts) and the painting the tower; this is just its footprint.
+  "Tour Eiffel": 2,
 };
 
 /** Sun from the south-west: shadow offset in metres per metre of height. */
@@ -351,10 +364,8 @@ export async function loadWorld(url: string, bdtopoUrl?: string): Promise<World>
     bdtopoUrl ? fetch(bdtopoUrl).then((r) => (r.ok && r.headers.get("content-type")?.includes("json") ? r.json() : null)) : null,
   ]);
   const k = raw.scale;
-  const [W, H] = raw.size;
-  const { s, w, n, e } = raw.bbox;
-  const lat0 = (s + n) / 2;
-  const lon0 = (w + e) / 2;
+  const lat0 = raw.origin.lat;
+  const lon0 = raw.origin.lon;
   const R = 6378137;
   const kx = (Math.PI / 180) * R * Math.cos((lat0 * Math.PI) / 180);
   const ky = (Math.PI / 180) * R;
@@ -394,8 +405,34 @@ export async function loadWorld(url: string, bdtopoUrl?: string): Promise<World>
     return { rings, h, mansard, cx, cy, white: WHITE.has(name), tone: hash(cy * 0.37, cx * 1.91), style, roof, kind, domes, top, info };
   });
 
+  const boundary = Float64Array.from(raw.boundary, (v) => v / k);
   const slab = new Path2D();
-  slab.rect(-W / 2, -H / 2, W, H);
+  ringsToPath(slab, [raw.boundary], k);
+  // Distance-to-edge test on a coarse grid, so per-frame checks stay cheap.
+  const [bx0, by0, bx1, by1] = raw.bounds;
+  const GRID = 20, gw = Math.ceil((bx1 - bx0) / GRID), gh = Math.ceil((by1 - by0) / GRID);
+  const inside = new Uint8Array(gw * gh);
+  for (let j = 0; j < gh; j++) {
+    // Where this row of cell centres crosses the outline, filled in pairs.
+    const y = by0 + (j + 0.5) * GRID, xs: number[] = [];
+    for (let i = 0, p = boundary.length - 2; i < boundary.length; p = i, i += 2) {
+      const ya = boundary[p + 1], yb = boundary[i + 1];
+      if (ya > y !== yb > y) xs.push(boundary[p] + ((y - ya) / (yb - ya)) * (boundary[i] - boundary[p]));
+    }
+    xs.sort((a, b) => a - b);
+    for (let q = 0; q + 1 < xs.length; q += 2) {
+      const a = Math.max(0, Math.ceil((xs[q] - bx0) / GRID - 0.5)), b = Math.min(gw - 1, Math.floor((xs[q + 1] - bx0) / GRID - 0.5));
+      inside.fill(1, j * gw + a, j * gw + b + 1);
+    }
+  }
+  const onMap = (x: number, y: number, margin = 0) => {
+    const cell = (px: number, py: number) => {
+      const i = Math.floor((px - bx0) / GRID), j = Math.floor((py - by0) / GRID);
+      return i >= 0 && j >= 0 && i < gw && j < gh && inside[j * gw + i] === 1;
+    };
+    if (!cell(x, y)) return false;
+    return !margin || (cell(x - margin, y) && cell(x + margin, y) && cell(x, y - margin) && cell(x, y + margin));
+  };
 
   const parks = new Path2D();
   const pitches = new Path2D();
@@ -419,8 +456,15 @@ export async function loadWorld(url: string, bdtopoUrl?: string): Promise<World>
   // Rails go on top of the street network, wide roads under narrow ones.
   const roads = [...byWidth.values()].sort((a, b) => Number(a.color === "rail") - Number(b.color === "rail") || b.width - a.width);
 
-  const shadows = new Path2D();
-  for (const b of buildings) addShadow(shadows, b.rings[0], SUN[0] * b.h, SUN[1] * b.h);
+  const SHADOW_CELL = 500;
+  const shadowCells = new Map<string, { x: number; y: number; path: Path2D }>();
+  for (const b of buildings) {
+    const x = Math.floor(b.cx / SHADOW_CELL), y = Math.floor(b.cy / SHADOW_CELL), key = `${x},${y}`;
+    let cell = shadowCells.get(key);
+    if (!cell) shadowCells.set(key, (cell = { x: x * SHADOW_CELL, y: y * SHADOW_CELL, path: new Path2D() }));
+    addShadow(cell.path, b.rings[0], SUN[0] * b.h, SUN[1] * b.h);
+  }
+  const shadows = [...shadowCells.values()];
 
   // Footpaths and service roads mapped through passages and courtyards would
   // put people and cars on top of the painted roofs: drop any whose middle is
@@ -499,7 +543,7 @@ export async function loadWorld(url: string, bdtopoUrl?: string): Promise<World>
 
 
   return {
-    W, H, buildings, trees, roads, streets, junctions, metro, walks, walkJunctions, rails, greens,
+    bounds: raw.bounds, boundary, onMap, buildings, trees, roads, streets, junctions, metro, walks, walkJunctions, rails, greens,
     ground: { slab, parks, pitches, cemeteries, water, bridges, treeShadows, shadows },
     project,
   };

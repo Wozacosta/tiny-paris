@@ -1,5 +1,5 @@
 // Fetches IGN BD TOPO buildings (height, floors, wall/roof materials, year)
-// for the map area into public/data/northeast-bdtopo.json, keyed by footprint
+// for the map area into public/data/paris-bdtopo.json, keyed by footprint
 // centroid so the client can match them to OSM buildings.
 //
 //   node scripts/fetch-bdtopo.mjs
@@ -7,7 +7,7 @@
 // Source: IGN BD TOPO®, Licence Ouverte Etalab 2.0.
 
 import { writeFile } from "node:fs/promises";
-import { BBOX, proj } from "./geo.mjs";
+import { BBOX, inParis, proj } from "./geo.mjs";
 
 const WFS = "https://data.geopf.fr/wfs/ows";
 const PROPS = ["nombre_d_etages", "hauteur", "materiaux_des_murs", "materiaux_de_la_toiture", "date_d_apparition", "usage_1", "geometrie"];
@@ -31,6 +31,7 @@ for (let start = 0; ; start += PAGE) {
     if (!ring?.length) continue;
     let lon = 0, lat = 0;
     for (const [x, y] of ring) { lon += x; lat += y; }
+    if (!inParis(lon / ring.length, lat / ring.length)) continue;
     const [x, y] = proj(lon / ring.length, lat / ring.length);
     const year = parseInt(p.date_d_apparition) || 0;
     out.push([x, y, p.hauteur ?? 0, p.nombre_d_etages ?? 0, p.materiaux_des_murs ?? "", p.materiaux_de_la_toiture ?? "", year]);
@@ -40,10 +41,10 @@ for (let start = 0; ; start += PAGE) {
 }
 
 const json = JSON.stringify({ fields: ["x", "y", "height", "floors", "walls", "roof", "year"], rows: out });
-await writeFile("public/data/northeast-bdtopo.json", json);
+await writeFile("public/data/paris-bdtopo.json", json);
 const has = (i, ok) => out.filter((r) => ok(r[i])).length;
 console.log(
-  `\nwrote public/data/northeast-bdtopo.json (${(json.length / 1e6).toFixed(1)} MB): ` +
+  `\nwrote public/data/paris-bdtopo.json (${(json.length / 1e6).toFixed(1)} MB): ` +
     `height ${has(2, (v) => v > 0)}, floors ${has(3, (v) => v > 0)}, walls ${has(4, (v) => v && v !== "00")}, ` +
     `roof ${has(5, (v) => v && v !== "00")}, year ${has(6, (v) => v > 0)} of ${out.length}`,
 );

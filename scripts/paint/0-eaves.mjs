@@ -4,12 +4,12 @@
 // Writes paint/ortho/eaves.json: decimetres per building, in the map data's
 // order, 0 where the LiDAR has nothing to say.
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { DIR } from "./common.mjs";
 
 const ix = JSON.parse(readFileSync(`${DIR}/ortho/index.json`, "utf8"));
-const raw = JSON.parse(readFileSync("public/data/northeast.json", "utf8"));
+const raw = JSON.parse(readFileSync("public/data/paris.json", "utf8"));
 const k = raw.scale;
 const res = ix.side / ix.hpx;
 
@@ -20,10 +20,13 @@ function heightAt(x, y) {
   if (i < 0 || j < 0 || i >= ix.cols || j >= ix.rows) return NaN;
   const key = `${i}_${j}`;
   let t = tiles.get(key);
-  if (!t) {
-    const b = readFileSync(`${DIR}/ortho/${key}.u16`);
-    tiles.set(key, (t = new Uint16Array(b.buffer, b.byteOffset, b.length / 2)));
+  if (t === undefined) {
+    // Not downloaded yet: no eaves for buildings there.
+    const file = `${DIR}/ortho/${key}.u16`;
+    const b = existsSync(file) ? readFileSync(file) : null;
+    tiles.set(key, (t = b && new Uint16Array(b.buffer, b.byteOffset, b.length / 2)));
   }
+  if (!t) return NaN;
   return t[Math.floor(fy - j * ix.hpx) * ix.hpx + Math.floor(fx - i * ix.hpx)] / 10;
 }
 

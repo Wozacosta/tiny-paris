@@ -188,19 +188,25 @@ export function buildRotView(world: World, r: Rotation): RotView {
     items.push({ kind: "t", canopy, light, bbox: [minX, minY, maxX, maxY] });
   }
 
-  // The two slab faces toward the camera, giving the map its "tile" look.
+  // The slab's side faces toward the camera, giving the map its "tile" look:
+  // every outline edge whose outward side faces the viewer.
   const T = 45;
-  const { W, H } = world;
-  const corners = [[-W / 2, -H / 2], [W / 2, -H / 2], [W / 2, H / 2], [-W / 2, H / 2]].map(([x, y]) => worldToIso(r, x, y));
+  const ring = world.boundary, n = ring.length / 2;
+  const corners = Array.from({ length: n }, (_, k) => worldToIso(r, ring[k * 2], ring[k * 2 + 1]));
+  let area = 0;
+  for (let k = 0; k < n; k++) {
+    const [ax, ay] = corners[k], [bx, by] = corners[(k + 1) % n];
+    area += ax * by - bx * ay;
+  }
   const left = new Path2D();
   const right = new Path2D();
-  for (let k = 0; k < 4; k++) {
+  for (let k = 0; k < n; k++) {
     const p = corners[k];
-    const q = corners[(k + 1) % 4];
-    // Edge is in front if its midpoint is lower on screen than the centre.
-    const midY = (p[1] + q[1]) / 2;
-    if (midY <= 0) continue;
-    const face = (p[0] + q[0]) / 2 < 0 ? left : right;
+    const q = corners[(k + 1) % n];
+    // Outward normal on screen; the edge shows if it points down.
+    const nx = (q[1] - p[1]) * Math.sign(area), ny = -(q[0] - p[0]) * Math.sign(area);
+    if (ny <= 0) continue;
+    const face = nx < 0 ? left : right;
     face.moveTo(p[0], p[1]);
     face.lineTo(q[0], q[1]);
     face.lineTo(q[0], q[1] + T * Z);
@@ -395,7 +401,7 @@ export function drawGround(ctx: CanvasRenderingContext2D, world: World, view: Ro
   ctx.fillStyle = theme.bridge;
   ctx.fill(g.bridges);
   ctx.fillStyle = theme.shadow;
-  ctx.fill(g.shadows);
+  for (const cell of g.shadows) ctx.fill(cell.path);
   ctx.fillStyle = theme.treeShadow;
   ctx.fill(g.treeShadows);
   ctx.restore();

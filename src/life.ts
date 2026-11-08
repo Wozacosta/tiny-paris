@@ -272,8 +272,7 @@ export class Life {
   collect(items: Item[], ctx: CanvasRenderingContext2D, r: Rotation, inView: InView, theme: Theme, cssZoom: number) {
     this.useSprites = !!this.sprites && cssZoom >= 1.1;
     this.street.collect(items, ctx, r, inView, theme, cssZoom);
-    const { W, H } = this.world;
-    const onMap = (x: number, y: number, m: number) => Math.abs(x) < W / 2 - m && Math.abs(y) < H / 2 - m;
+    const onMap = this.world.onMap;
     if (cssZoom >= 0.55) {
       for (const b of this.boats) {
         const p = sample(b.lane, b.s);

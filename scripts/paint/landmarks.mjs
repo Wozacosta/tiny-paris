@@ -1,7 +1,7 @@
 // What notable buildings really look like, for tiles where the plain base
 // render can't show it. Added to the prompt of each tile a landmark falls in.
 
-import { BBOX, kx, ky } from "../geo.mjs";
+import { ORIGIN, kx, ky } from "../geo.mjs";
 
 export const LANDMARKS = [
   // The station straddles two tiles: the shed is painted by one, the façade by the other.
@@ -43,10 +43,56 @@ export const LANDMARKS = [
   { name: "Boulevard Richard-Lenoir", lon: 2.3707, lat: 48.8625, look: "a wide boulevard with NO water: the Canal Saint-Martin runs underground here, covered by a long central strip of gardens, lawns, playgrounds and tree-lined promenades between the two carriageways, with the Bastille market stalls on it" },
   { name: "Square Frédérick-Lemaître", lon: 2.3680, lat: 48.8678, look: "a small garden square on top of the covered canal (no open water), just south of where the canal comes out of its tunnel at the Temple lock" },
   { name: "Cimetière du Père-Lachaise", lon: 2.3960, lat: 48.8605, look: "a wooded cemetery densely packed with stone tombs and small chapels along cobbled paths" },
+
+  // The rest of Paris inside the périphérique.
+  { name: "Tour Eiffel", radius: 520, lon: 2.29448, lat: 48.85826, look: "the Eiffel Tower: a very tall wrought-iron lattice tower painted bronze-brown, standing on four curved splayed legs joined by great arches at the first level, tapering to a slender spire with a small top platform, with the open Champ de Mars lawns stretching away from it" },
+  { name: "Arc de Triomphe", radius: 340, lon: 2.29504, lat: 48.87378, look: "the Arc de Triomphe: a massive pale limestone triumphal arch with one great arched opening on each side and large sculpted reliefs, standing alone in the middle of the huge round Place de l'Étoile, with twelve avenues radiating from it" },
+  { name: "Cathédrale Notre-Dame de Paris", radius: 380, lon: 2.34990, lat: 48.85296, look: "Notre-Dame cathedral on its island: a Gothic cathedral of pale stone with two square towers on the west façade above three portals and a rose window, a long nave under a lead roof with a slender lead spire at the crossing, and flying buttresses all around the apse" },
+  { name: "Sainte-Chapelle", lon: 2.34500, lat: 48.85540, look: "the Sainte-Chapelle: a tall narrow Gothic chapel of pale stone with huge stained-glass windows, a steep blue-grey slate roof and a slender gilded spire, inside the courtyard of the Palais de Justice" },
+  { name: "Hôtel de Ville", radius: 320, lon: 2.35224, lat: 48.85638, look: "Paris city hall: a large Neo-Renaissance palace of pale stone with many tall steep slate pavilion roofs, a central clock tower, rows of statues on the façade, facing a wide open square" },
+  { name: "Panthéon", radius: 320, lon: 2.34600, lat: 48.84622, look: "the Panthéon: a neoclassical temple of pale limestone with a columned portico and pediment, a Greek-cross plan, and a huge dome on a ring of columns at its centre, at the top of a hill" },
+  { name: "Les Invalides", radius: 440, lon: 2.31258, lat: 48.85502, look: "Les Invalides: a long classical stone complex around courtyards with dark slate roofs, and at its south end the Dôme des Invalides, a tall church dome covered in gold leaf with a lantern on top" },
+  { name: "Musée d'Orsay", radius: 340, lon: 2.32656, lat: 48.85998, look: "the Musée d'Orsay: a former Beaux-Arts railway station on the river bank, a long pale stone building with a great arched glass-and-iron roof and two large clock faces on its river front" },
+  { name: "Grand Palais", radius: 380, lon: 2.31252, lat: 48.86610, look: "the Grand Palais: a huge Beaux-Arts exhibition hall of stone with colonnaded façades and a vast barrel-vaulted glass-and-steel roof with a glass dome, with bronze chariot statues at its corners" },
+  { name: "Petit Palais", lon: 2.31470, lat: 48.86600, look: "the Petit Palais: a Beaux-Arts palace of pale stone with an Ionic colonnade, a monumental arched entrance under a small dome, around a semicircular garden courtyard" },
+  { name: "Place de la Concorde", radius: 320, lon: 2.32118, lat: 48.86560, look: "the Place de la Concorde: a vast open paved square with the tall thin Egyptian obelisk of Luxor at its centre, two large ornate fountains and stone statues at its corners" },
+  { name: "Église de la Madeleine", lon: 2.32447, lat: 48.87004, look: "La Madeleine: a church built as a Roman temple of pale stone, ringed by tall Corinthian columns on all sides under a single pediment and a low roof, standing on a high podium" },
+  { name: "Place Vendôme", lon: 2.32940, lat: 48.86750, look: "the Place Vendôme: an octagonal square enclosed by uniform classical stone façades with arcades and slate mansards, with a tall bronze column topped by a statue in its middle" },
+  { name: "Tour Montparnasse", radius: 320, lon: 2.32193, lat: 48.84212, look: "the Tour Montparnasse: a single 210 m office skyscraper, a slim rounded slab clad in dark bronze-tinted glass and steel, towering over the low city, with a lower shopping centre at its foot" },
+  { name: "Palais du Luxembourg", radius: 440, lon: 2.33711, lat: 48.84862, look: "the Luxembourg palace (the Senate): a 17th-century palace of pale stone with a domed central pavilion and slate roofs, overlooking the formal Luxembourg gardens with an octagonal basin, terraces and rows of trees" },
+  { name: "Église Saint-Sulpice", lon: 2.33476, lat: 48.85098, look: "Saint-Sulpice: a massive classical church of pale stone with a two-storey colonnaded west façade between two square towers of unequal height, facing a square with a large fountain" },
+  { name: "Église Saint-Germain-des-Prés", lon: 2.33427, lat: 48.85394, look: "Saint-Germain-des-Prés: a Romanesque abbey church of grey stone with a single square bell tower with a slate spire at its west end and a long nave" },
+  { name: "Opéra Bastille", radius: 340, lon: 2.37000, lat: 48.85213, look: "the Opéra Bastille: a large modern opera house of curved glass and grey-blue granite façades, with a big cylindrical glazed front" },
+  { name: "Colonne de Juillet", lon: 2.36910, lat: 48.85320, look: "the July Column: a tall green bronze column topped by a small gilded winged statue, in the middle of the large round Place de la Bastille with traffic around it" },
+  { name: "Place des Vosges", lon: 2.36549, lat: 48.85561, look: "the Place des Vosges: a perfectly square garden with lawns, trees and fountains, enclosed by identical red-brick and white-stone houses with steep dark slate roofs over arcades" },
+  { name: "Bibliothèque nationale François-Mitterrand", radius: 400, lon: 2.37595, lat: 48.83367, look: "the national library: four tall L-shaped glass towers like open books at the corners of a huge wooden-decked esplanade, around a sunken rectangular garden of tall pine trees" },
+  { name: "Accor Arena", lon: 2.37846, lat: 48.83864, look: "the Bercy arena: a pyramid-shaped sports hall whose sloping sides are covered in green lawn, with a glass-and-steel structure on top" },
+  { name: "Gare de Lyon", radius: 340, lon: 2.37388, lat: 48.84442, look: "the Gare de Lyon: a Beaux-Arts railway station with a tall square clock tower at its corner, a long ornate stone façade and iron-and-glass train sheds behind" },
+  { name: "Gare d'Austerlitz", radius: 340, lon: 2.36500, lat: 48.84249, look: "the Gare d'Austerlitz: a long 19th-century railway station of pale stone with a huge single-span iron-and-glass train shed behind its façade" },
+  { name: "Gare Montparnasse", radius: 340, lon: 2.31930, lat: 48.84070, look: "the Gare Montparnasse: a long modern glass-and-steel station building, with the Jardin Atlantique, a garden built on a deck over the tracks, behind it" },
+  { name: "Gare Saint-Lazare", radius: 340, lon: 2.32496, lat: 48.87633, look: "the Gare Saint-Lazare: a 19th-century stone station façade with a large clock, and behind it wide iron-and-glass train sheds over many tracks" },
+  { name: "Palais de Chaillot", radius: 420, lon: 2.28763, lat: 48.86249, look: "the Palais de Chaillot: two long curved pale stone wings with flat roofs on the Trocadéro hill, framing a wide open esplanade, with terraced gardens and long fountain basins stepping down to the river" },
+  { name: "Pont Alexandre III", lon: 2.31353, lat: 48.86393, look: "the Pont Alexandre III: a single low steel arch bridge over the river, ornate with gilded winged statues on tall stone pillars at both ends and Art Nouveau lamps along it" },
+  { name: "École Militaire", radius: 360, lon: 2.30447, lat: 48.85107, look: "the École Militaire: a long 18th-century classical military academy of pale stone with a central domed pavilion and columns, at the end of the Champ de Mars" },
+  { name: "Institut de France", lon: 2.33733, lat: 48.85738, look: "the Institut de France: a 17th-century classical building with a curved façade on the river bank and a central chapel with a gilded dome" },
+  { name: "Conciergerie", lon: 2.34555, lat: 48.85614, look: "the Conciergerie: a medieval palace on the island's river bank with round towers with pointed slate roofs and a square clock tower at its corner" },
+  { name: "Val-de-Grâce", lon: 2.34199, lat: 48.84034, look: "the Val-de-Grâce: a Baroque church with a tall ribbed dome decorated with gilding, behind a two-storey columned façade, beside a cloister" },
+  { name: "Institut du monde arabe", lon: 2.35730, lat: 48.84898, look: "the Institut du monde arabe: a modern building with a long glass façade made of grids of square metal screens like mashrabiya, and a curved wing along the river" },
+  { name: "Grande Mosquée de Paris", lon: 2.35511, lat: 48.84193, look: "the Great Mosque of Paris: a Hispano-Moorish complex of white walls and green-tiled roofs around a garden courtyard, with a square white minaret" },
+  { name: "Jardin des Plantes", radius: 440, lon: 2.35880, lat: 48.84390, look: "the botanical garden: long formal flower beds and tree alleys, glass greenhouses, and at one end the Grande Galerie de l'Évolution, a large stone museum building" },
+  { name: "Parc André-Citroën", radius: 420, lon: 2.27470, lat: 48.84090, look: "a modern park: a huge rectangular lawn sloping to the river, framed by two tall glass greenhouses, with water jets on a plaza and themed gardens" },
+  { name: "Maison de la Radio", radius: 340, lon: 2.27880, lat: 48.85266, look: "the Maison de la Radio: a large round building with a curved ring of white-and-aluminium offices around a central tower, by the river" },
+  { name: "Parc Monceau", radius: 360, lon: 2.30880, lat: 48.87970, look: "Parc Monceau: an English-style park with winding paths, lawns, large trees, an oval pond lined with a Corinthian colonnade, and a small round rotunda at its entrance" },
+  { name: "Église Saint-Augustin", lon: 2.31840, lat: 48.87584, look: "Saint-Augustin: a large 1860s church of stone on an iron frame, with a big dome over the crossing and a narrow tall façade" },
+  { name: "Tribunal de Paris", radius: 320, lon: 2.31590, lat: 48.89660, look: "the Paris law courts tower by Renzo Piano: a 160 m glass tower made of three stacked blocks of decreasing size, with trees on the terraces between them" },
+  { name: "Parc Montsouris", radius: 400, lon: 2.33840, lat: 48.82230, look: "Parc Montsouris: a hilly English-style park with a lake, lawns, winding paths and large trees" },
+  { name: "Cité internationale universitaire", radius: 440, lon: 2.33780, lat: 48.81970, look: "the international student city: many residence halls in different national styles scattered across a big wooded park, with the large Maison internationale, a 1930s palace with a central tower" },
+  { name: "Salpêtrière", lon: 2.36070, lat: 48.83860, look: "the Pitié-Salpêtrière hospital chapel: a 17th-century classical church with an octagonal dome on a drum, among long stone hospital wings" },
+  { name: "Ministère de l'Économie à Bercy", radius: 340, lon: 2.37400, lat: 48.83820, look: "the Finance Ministry: a very long modern building like a bridge, stretching out over the riverside road with its end standing on pillars in the river" },
 ];
 
-const lat0 = (BBOX.s + BBOX.n) / 2;
-const lon0 = (BBOX.w + BBOX.e) / 2;
+const lat0 = ORIGIN.lat;
+const lon0 = ORIGIN.lon;
 
 /** A landmark's position in mosaic pixels. `m` is paint/manifest.json. */
 export function landmarkPixel(m, l) {

@@ -6,24 +6,40 @@
 // decimetres above ground) and paint/ortho/index.json.
 
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { DIR } from "./common.mjs";
 
 const SIDE = 512; // metres per tile
 const PX = 2048; // photo pixels per tile: 25 cm
 const HPX = 1024; // height samples per tile: 50 cm, LiDAR HD's grid
 
-const raw = JSON.parse(await readFile("public/data/northeast.json", "utf8"));
-const { s, w, n, e } = raw.bbox;
-const [W, H] = raw.size;
+const raw = JSON.parse(await readFile("public/data/paris.json", "utf8"));
 // Same projection as the app (src/model.ts).
-const lat0 = (s + n) / 2, lon0 = (w + e) / 2, R = 6378137;
+const lat0 = raw.origin.lat, lon0 = raw.origin.lon, R = 6378137;
 const kx = (Math.PI / 180) * R * Math.cos((lat0 * Math.PI) / 180), ky = (Math.PI / 180) * R;
-const x0 = -W / 2, y0 = -H / 2;
-const cols = Math.ceil(W / SIDE), rows = Math.ceil(H / SIDE);
-
+// The tile grid stays aligned to the first map's, whose corner was
+// (-2562.5, -2226.5) m, so tiles already downloaded keep their place.
+const [bx0, by0, bx1, by1] = raw.bounds;
+const AX = -2562.5, AY = -2226.5;
+const x0 = AX - Math.ceil((AX - bx0) / SIDE) * SIDE, y0 = AY - Math.ceil((AY - by0) / SIDE) * SIDE;
+const cols = Math.ceil((bx1 - x0) / SIDE), rows = Math.ceil((by1 - y0) / SIDE);
+// Tiles of the first map, named from its corner, renamed to this grid.
+const shiftI = Math.round((AX - x0) / SIDE), shiftJ = Math.round((AY - y0) / SIDE);
 const out = `${DIR}/ortho`;
 await mkdir(out, { recursive: true });
+const prev = existsSync(`${out}/index.json`) ? JSON.parse(await readFile(`${out}/index.json`, "utf8")) : null;
+if (prev && (prev.x0 !== x0 || prev.y0 !== y0)) {
+  if (prev.x0 !== AX || prev.y0 !== AY) throw new Error("paint/ortho has an unexpected grid; delete it to start over");
+  // Highest first, so a rename never lands on a tile not yet moved.
+  const old = [];
+  for (let j = 0; j < prev.rows; j++) for (let i = 0; i < prev.cols; i++) old.push([i, j]);
+  old.sort((a, b) => b[1] - a[1] || b[0] - a[0]);
+  for (const [i, j] of old) for (const ext of ["jpg", "u16"]) {
+    if (existsSync(`${out}/${i}_${j}.${ext}`)) await rename(`${out}/${i}_${j}.${ext}`, `${out}/${i + shiftI}_${j + shiftJ}.${ext}`);
+  }
+  await writeFile(`${out}/index.json`, JSON.stringify({ ...prev, x0, y0, cols, rows }));
+  console.log(`moved the first map's tiles by ${shiftI}, ${shiftJ}`);
+}
 let done = 0;
 const jobs = [];
 for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) jobs.push([i, j]);

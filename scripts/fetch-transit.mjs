@@ -1,4 +1,4 @@
-// Fetches RATP bus lines and Vélib' stations into public/data/northeast-transit.json.
+// Fetches RATP bus lines and Vélib' stations into public/data/paris-transit.json.
 // Separate from fetch-osm.mjs so the city geometry (which the painted area is
 // aligned to) doesn't change when transit is refreshed.
 //
@@ -98,9 +98,9 @@ const squares = sq.elements
 // Each line usually exists once per direction; keep both, they share ways.
 const out = { ways, lines, velib, waterways, squares };
 const json = JSON.stringify(out);
-await writeFile("public/data/northeast-transit.json", json);
+await writeFile("public/data/paris-transit.json", json);
 console.log(
-  `wrote public/data/northeast-transit.json (${(json.length / 1e6).toFixed(1)} MB): ` +
+  `wrote public/data/paris-transit.json (${(json.length / 1e6).toFixed(1)} MB): ` +
     `${lines.length} bus line directions (${new Set(lines.map((l) => l.ref)).size} lines), ` +
     `${Object.keys(ways).length} ways, ${velib.length} Vélib' stations, ` +
     `waterways: ${waterways.map((w) => `${w.name} (${w.p.length / 2} pts)`).join(", ")}, squares: ${squares.length}`,

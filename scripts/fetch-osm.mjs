@@ -1,37 +1,60 @@
-// Fetches north-east Paris from OpenStreetMap (Overpass) and writes a
-// compact local-metre dataset to public/data/northeast.json.
+// Builds Paris inside the périphérique from an OpenStreetMap extract and
+// writes a compact local-metre dataset to public/data/paris.json.
 //
 //   node scripts/fetch-osm.mjs
 //
+// Uses Geofabrik's Île-de-France extract and osmium (brew install
+// osmium-tool): Overpass is far too slow for a city this size.
 // Data © OpenStreetMap contributors, ODbL.
 
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { writeFile, mkdir } from "node:fs/promises";
-import { BBOX, bb, kx, ky, overpass, proj } from "./geo.mjs";
-const query = `[out:json][timeout:300];
-(
-  way["building"](${bb});
-  relation["building"](${bb});
-  way["natural"="water"](${bb});
-  relation["natural"="water"](${bb});
-  way["leisure"~"^(park|garden|pitch)$"](${bb});
-  relation["leisure"~"^(park|garden)$"](${bb});
-  way["landuse"~"^(grass|village_green|flowerbed|cemetery)$"](${bb});
-  relation["landuse"="cemetery"](${bb});
-  way["railway"~"^(rail|light_rail|tram)$"](${bb});
-  way["railway"="subway"][!"service"](${bb});
-  way["highway"~"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|pedestrian|service|footway|path|cycleway)$"](${bb});
-  way["man_made"="bridge"](${bb});
-  relation["man_made"="bridge"](${bb});
-  node["natural"="tree"](${bb});
-);
-out geom(${bb});`;
+import { BBOX, BOUNDARY, ORIGIN, inParis, proj } from "./geo.mjs";
 
-const W = Math.round((BBOX.e - BBOX.w) * kx);
-const H = Math.round((BBOX.n - BBOX.s) * ky);
+const DIR = "paint/osm";
+const PBF = `${DIR}/ile-de-france.osm.pbf`;
+await mkdir(DIR, { recursive: true });
+if (!existsSync(PBF)) {
+  console.log("downloading the Île-de-France extract…");
+  execFileSync("curl", ["-sL", "-o", PBF, "https://download.geofabrik.de/europe/france/ile-de-france-latest.osm.pbf"], { stdio: "inherit" });
+}
+const m = 0.003;
+const run = (...args) => execFileSync("osmium", args, { stdio: ["ignore", "ignore", "inherit"] });
+run("extract", "-b", `${BBOX.w - m},${BBOX.s - m},${BBOX.e + m},${BBOX.n + m}`, "--strategy", "smart", "-O", "-o", `${DIR}/paris.osm.pbf`, PBF);
+run("tags-filter", "-O", "-o", `${DIR}/paris-f.osm.pbf`, `${DIR}/paris.osm.pbf`,
+  "w/building", "r/building", "w/natural=water", "r/natural=water", "w/leisure=park,garden,pitch", "r/leisure=park,garden",
+  "w/landuse=grass,village_green,flowerbed,cemetery", "r/landuse=cemetery", "w/railway=rail,light_rail,tram,subway",
+  "w/highway=motorway,trunk,primary,secondary,tertiary,unclassified,residential,living_street,pedestrian,service,footway,path,cycleway",
+  "w/man_made=bridge", "r/man_made=bridge", "n/natural=tree");
+run("export", "-O", "-f", "geojsonseq", "--geometry-types=point,linestring,polygon", "-o", `${DIR}/paris.geojsonseq`, `${DIR}/paris-f.osm.pbf`);
 
-const osm = await overpass(query);
+// Features as { tags, kind: "point" | "line" | "area", coords }.
+const features = [];
+for (const line of readFileSync(`${DIR}/paris.geojsonseq`, "utf8").split("\x1e")) {
+  if (!line.trim()) continue;
+  const f = JSON.parse(line);
+  const g = f.geometry;
+  if (g.type === "Point") features.push({ tags: f.properties, kind: "point", coords: g.coordinates });
+  else if (g.type === "LineString") features.push({ tags: f.properties, kind: "line", coords: g.coordinates });
+  else if (g.type === "Polygon") features.push({ tags: f.properties, kind: "area", coords: [g.coordinates] });
+  else if (g.type === "MultiPolygon") features.push({ tags: f.properties, kind: "area", coords: g.coordinates });
+}
 
-const ptsOf = (geom) => geom.filter(Boolean).map((g) => proj(g.lon, g.lat));
+// Keep what's in Paris: things with a point inside the boundary (ground
+// layers are clipped to it when drawn), buildings and trees by their centre.
+const kept = features.filter((f) => {
+  if (f.kind === "point") return inParis(...f.coords);
+  const pts = f.kind === "line" ? f.coords : f.coords.flatMap((poly) => poly[0]);
+  if (!f.tags.building) return pts.some(([lon, lat]) => inParis(lon, lat));
+  return inParis(pts.reduce((a, p) => a + p[0], 0) / pts.length, pts.reduce((a, p) => a + p[1], 0) / pts.length);
+});
+
+const boundary = BOUNDARY.map(([lon, lat]) => proj(lon, lat));
+const xs = boundary.map((p) => p[0] / 10), ys = boundary.map((p) => p[1] / 10);
+const bounds = [Math.floor(Math.min(...xs)), Math.floor(Math.min(...ys)), Math.ceil(Math.max(...xs)), Math.ceil(Math.max(...ys))];
+
+const ptsOf = (coords) => coords.map(([lon, lat]) => proj(lon, lat));
 
 // Drop a closing duplicate point and simplify collinear/duplicate points.
 function cleanRing(r) {
@@ -44,69 +67,6 @@ function cleanRing(r) {
   }
   return out.length >= 3 ? out : null;
 }
-
-// Join relation member ways into closed rings.
-function assembleRings(ways) {
-  const pool = ways.filter((w) => w.length >= 2).map((w) => w.slice());
-  const rings = [];
-  const eq = (a, b) => a[0] === b[0] && a[1] === b[1];
-  while (pool.length) {
-    let ring = pool.shift();
-    let grew = true;
-    while (!eq(ring[0], ring.at(-1)) && grew) {
-      grew = false;
-      for (let i = 0; i < pool.length; i++) {
-        const w = pool[i];
-        if (eq(ring.at(-1), w[0])) ring = ring.concat(w.slice(1));
-        else if (eq(ring.at(-1), w.at(-1))) ring = ring.concat(w.slice(0, -1).reverse());
-        else if (eq(ring[0], w.at(-1))) ring = w.concat(ring.slice(1));
-        else if (eq(ring[0], w[0])) ring = w.slice().reverse().concat(ring.slice(1));
-        else continue;
-        pool.splice(i, 1);
-        grew = true;
-        break;
-      }
-    }
-    // Rings clipped by the bbox may stay open; closing them is good enough.
-    const c = cleanRing(ring);
-    if (c) rings.push(c);
-  }
-  return rings;
-}
-
-// Polygon as [outer, ...holes], or several polygons for multipolygons.
-function polygonsOf(el) {
-  if (el.type === "way") {
-    const r = cleanRing(ptsOf(el.geometry ?? []));
-    return r ? [[r]] : [];
-  }
-  const outers = assembleRings(el.members.filter((m) => m.role !== "inner" && m.geometry).map((m) => ptsOf(m.geometry)));
-  const inners = assembleRings(el.members.filter((m) => m.role === "inner" && m.geometry).map((m) => ptsOf(m.geometry)));
-  const polys = outers.map((o) => [o]);
-  for (const hole of inners) {
-    const p = polys.find((poly) => pointInRing(hole[0], poly[0]));
-    if (p) p.push(hole);
-  }
-  return polys;
-}
-
-function pointInRing([x, y], ring) {
-  let inside = false;
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    const [xi, yi] = ring[i];
-    const [xj, yj] = ring[j];
-    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
-  }
-  return inside;
-}
-
-function centroid(ring) {
-  let x = 0, y = 0;
-  for (const p of ring) { x += p[0]; y += p[1]; }
-  return [x / ring.length, y / ring.length];
-}
-
-const inBox = ([x, y]) => Math.abs(x) <= W * 5 && Math.abs(y) <= H * 5;
 
 function parseMetres(v) {
   if (!v) return null;
@@ -139,55 +99,50 @@ const ROAD_WIDTH = {
 };
 
 const out = {
-  bbox: BBOX, size: [W, H], scale: 10,
+  // World metres (×scale) around `origin`; `bounds` in metres; `boundary` the outline.
+  bbox: BBOX, origin: ORIGIN, bounds, boundary: boundary.flat(), scale: 10,
   buildings: [], water: [], parks: [], bridges: [], roads: [], trees: [], metro: [],
 };
 const subwayWays = [];
 
-for (const el of osm.elements) {
-  const t = el.tags ?? {};
-  if (el.type === "node") {
-    const p = proj(el.lon, el.lat);
-    if (t.natural === "tree") out.trees.push(p);
+for (const f of kept) {
+  const t = f.tags;
+  if (f.kind === "point") {
+    if (t.natural === "tree") out.trees.push(proj(...f.coords));
     continue;
   }
-  if (t.railway === "subway" && el.type === "way") {
-    // Elevation per way: viaducts up, tunnels down. Smoothed into ramps client-side.
-    const z = t.bridge ? parseMetres(t.height) ?? 7 : t.tunnel ? -12 : 0;
-    const pts = ptsOf(el.geometry ?? []);
-    if (pts.length >= 2) subwayWays.push({ pts, z, line: t.ref ?? "" });
-    continue;
-  }
-  if (t.railway && el.type === "way") {
-    if (t.tunnel === "yes" || t.covered === "yes") continue;
-    const pts = ptsOf(el.geometry ?? []);
-    if (pts.length >= 2) out.roads.push({ w: t.railway === "tram" ? 2 : 3, k: "rail", p: pts.flat() });
-    continue;
-  }
-  if (t.highway && el.type === "way") {
-    if (t.area === "yes" || t.tunnel === "yes" || t.covered === "yes") continue;
-    const pts = ptsOf(el.geometry ?? []);
-    if (pts.length >= 2) out.roads.push({ w: ROAD_WIDTH[t.highway] ?? 4, k: t.highway, p: pts.flat() });
+  if (f.kind === "line") {
+    const pts = ptsOf(f.coords);
+    if (pts.length < 2) continue;
+    if (t.railway === "subway") {
+      if (t.service) continue;
+      // Elevation per way: viaducts up, tunnels down. Smoothed into ramps client-side.
+      const z = t.bridge ? parseMetres(t.height) ?? 7 : t.tunnel ? -12 : 0;
+      subwayWays.push({ pts, z, line: t.ref ?? "" });
+    } else if (t.railway) {
+      if (t.tunnel === "yes" || t.covered === "yes") continue;
+      out.roads.push({ w: t.railway === "tram" ? 2 : 3, k: "rail", p: pts.flat() });
+    } else if (t.highway) {
+      if (t.area === "yes" || t.tunnel === "yes" || t.covered === "yes") continue;
+      out.roads.push({ w: ROAD_WIDTH[t.highway] ?? 4, k: t.highway, p: pts.flat() });
+    }
     continue;
   }
   // Covered canals (Voûte Richard-Lenoir, Voûte du Temple) and other
   // underground features aren't visible from above.
   if (!t.building && (t.tunnel || t.location === "underground" || t.covered === "yes" || parseFloat(t.layer) < 0)) continue;
-  const polys = polygonsOf(el);
+  if (t.highway || t.railway) continue;
+  const polys = f.coords.map((poly) => poly.map((r) => cleanRing(ptsOf(r))).filter(Boolean)).filter((p) => p.length);
   if (!polys.length) continue;
   const flat = (poly) => poly.map((r) => r.flat());
   if (t.building) {
     if (t.building === "construction" || t.location === "underground") continue;
-    for (const poly of polys) {
-      if (!inBox(centroid(poly[0]))) continue;
-      const h = heightOf(t);
-      out.buildings.push({ r: flat(poly), h, i: infoOf(t) });
-    }
+    for (const poly of polys) out.buildings.push({ r: flat(poly), h: heightOf(t), i: infoOf(t) });
   } else if (t.natural === "water") {
     for (const poly of polys) out.water.push(flat(poly));
   } else if (t.man_made === "bridge") {
     for (const poly of polys) out.bridges.push(flat(poly));
-  } else {
+  } else if (t.leisure || t.landuse) {
     const kind = t.leisure === "pitch" ? "pitch" : t.landuse === "cemetery" ? "cemetery" : "park";
     for (const poly of polys) out.parks.push({ k: kind, r: flat(poly) });
   }
@@ -225,9 +180,9 @@ for (const b of out.buildings) {
 
 await mkdir("public/data", { recursive: true });
 const json = JSON.stringify(out);
-await writeFile(`public/data/northeast.json`, json);
+await writeFile(`public/data/paris.json`, json);
 console.log(
-  `wrote public/data/northeast.json (${(json.length / 1e6).toFixed(1)} MB): ` +
+  `wrote public/data/paris.json (${(json.length / 1e6).toFixed(1)} MB): ` +
     `${out.buildings.length} buildings, ${out.trees.length} trees, ${out.roads.length} roads, ` +
     `${out.water.length} water, ${out.parks.length} parks, ${out.bridges.length} bridges, ` +
     `${out.metro.length} metro chains`,

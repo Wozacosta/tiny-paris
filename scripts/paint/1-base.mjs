@@ -6,7 +6,7 @@
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
-import { AREA, DIR, OVERLAP, ROTATION, STEP, TILE, ZOOM, areaPolygon, openExportPage } from "./common.mjs";
+import { AREA, DIR, GRID_ANCHOR, OVERLAP, ROTATION, STEP, TILE, ZOOM, areaPolygon, openExportPage } from "./common.mjs";
 
 const { values: opt } = parseArgs({
   options: { out: { type: "string" }, only: { type: "string" }, mask: { type: "boolean", default: false } },
@@ -16,15 +16,14 @@ opt.out ??= opt.mask ? `${DIR}/stonemask` : `${DIR}/base`;
 
 const { page, close } = await openExportPage();
 try {
-  const corners = await page.evaluate(
-    ({ r, a }) => window.tinyExport.corners(r, a.w, a.s, a.e, a.n),
-    { r: ROTATION, a: AREA },
-  );
-  const poly = areaPolygon(corners);
+  const outline = await page.evaluate((r) => window.tinyExport.outline(r), ROTATION);
+  const poly = areaPolygon(outline);
   const xs = poly.map((p) => p[0]), ys = poly.map((p) => p[1]);
-  // Mosaic origin and size in canvas pixels, padded so edge tiles get context.
-  const pad = OVERLAP / ZOOM;
-  const ox = Math.min(...xs) - pad, oy = Math.min(...ys) - pad;
+  // Mosaic origin and size in canvas pixels, padded so edge tiles get
+  // context, and snapped to the first map's tile grid.
+  const pad = OVERLAP / ZOOM, S = STEP / ZOOM;
+  const ox = GRID_ANCHOR[0] - Math.ceil((GRID_ANCHOR[0] - (Math.min(...xs) - pad)) / S) * S;
+  const oy = GRID_ANCHOR[1] - Math.ceil((GRID_ANCHOR[1] - (Math.min(...ys) - pad)) / S) * S;
   const width = Math.ceil((Math.max(...xs) + pad - ox) * ZOOM);
   const height = Math.ceil((Math.max(...ys) + pad - oy) * ZOOM);
   const cols = Math.ceil((width - OVERLAP) / STEP);

@@ -7,24 +7,31 @@
     <link rel="icon" href="/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600&family=Pixelify+Sans:wght@500;700&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
     <canvas id="map" aria-label="Isometric map of north-east Paris"></canvas>
 
-    <header class="card title">
-      <h1>Tiny Paris</h1>
-      <p id="stats">Laying the cobblestones…</p>
-      <p class="by">
-        by <a href="https://woza.ink" target="_blank" rel="noopener">woza.ink</a> ·
-        <a href="https://x.com/wozacos" target="_blank" rel="noopener">X</a> ·
-        <a href="https://bsky.app/profile/woza.ink" target="_blank" rel="noopener">Bluesky</a> ·
-        <a href="https://github.com/Wozacosta" target="_blank" rel="noopener">GitHub</a>
-      </p>
+    <header class="title">
+      <div class="plaque">
+        <span class="arrt">1<sup>er</sup> – 20<sup>e</sup> Arr<sup>t</sup></span>
+        <h1>Tiny Paris</h1>
+      </div>
+      <div class="ticket">
+        <div class="ticket-head"><span>Ticket</span><span>Paris intra-muros</span></div>
+        <p id="stats">Laying the cobblestones…</p>
+        <div class="stripe" aria-hidden="true"></div>
+        <p class="by">
+          by <a href="https://woza.ink" target="_blank" rel="noopener">woza.ink</a> ·
+          <a href="https://x.com/wozacos" target="_blank" rel="noopener">X</a> ·
+          <a href="https://bsky.app/profile/woza.ink" target="_blank" rel="noopener">Bluesky</a> ·
+          <a href="https://github.com/Wozacosta" target="_blank" rel="noopener">GitHub</a>
+        </p>
+      </div>
     </header>
 
-    <nav class="card controls" aria-label="Map controls">
+    <nav class="controls" aria-label="Map controls">
       <button id="zoom-in" title="Zoom in (+)">+</button>
       <button id="zoom-out" title="Zoom out (−)">−</button>
       <button id="theme" title="Day / night (N)">☾</button>
@@ -44,12 +51,12 @@
         </div>
       </div>
       <div class="places-bar">
-        <button id="places-toggle" aria-expanded="false" aria-controls="places-body">Go to <span class="chev">▴</span></button>
+        <button id="places-toggle" aria-expanded="false" aria-controls="places-body"><span class="m" aria-hidden="true">M</span>Go to <span class="chev">▴</span></button>
         <button id="wander" title="Jump to a random named building (W)">Wander ↝</button>
       </div>
     </section>
 
-    <aside class="card info" id="info" hidden>
+    <aside class="info" id="info" hidden>
       <button class="close" id="info-close" aria-label="Close">×</button>
       <h2 id="info-title"></h2>
       <dl id="info-body"></dl>

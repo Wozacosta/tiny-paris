@@ -48,8 +48,18 @@ export async function openBlankPage() {
   return { page, close: () => browser.close() };
 }
 
-/** Area outline in iso units: ground diamond with its far edges raised by HEADROOM. */
-export function areaPolygon(corners) {
-  const cy = corners.reduce((a, p) => a + p[1], 0) / 4;
-  return corners.map(([x, y]) => [x, y < cy ? y - HEADROOM : y]);
+/**
+ * Area outline in iso units: the map's ground outline with its far side
+ * raised by up to HEADROOM, so tall buildings along it aren't cut.
+ */
+export function areaPolygon(outline) {
+  const ys = outline.map((p) => p[1]);
+  const cy = (Math.min(...ys) + Math.max(...ys)) / 2, half = (Math.max(...ys) - Math.min(...ys)) / 2;
+  return outline.map(([x, y]) => [x, y - HEADROOM * Math.max(0, Math.min(1, ((cy - y) / half) * 3))]);
 }
+
+/**
+ * The first painted map's mosaic origin, in iso units: tile grids are kept
+ * aligned to it (a whole number of steps away) so its tiles stay usable.
+ */
+export const GRID_ANCHOR = [-4868.770694644996, -2554.3853473224817];

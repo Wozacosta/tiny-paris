@@ -4,7 +4,7 @@
 
 import { readFileSync } from "node:fs";
 
-const world = JSON.parse(readFileSync("public/data/northeast.json", "utf8"));
+const world = JSON.parse(readFileSync("public/data/paris.json", "utf8"));
 
 // Map data (decimetres) to mosaic pixels for rotation 3 (sx = x + y, sy = (y - x) / 2).
 const toPixel = (m, dx, dy) => {
