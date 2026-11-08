@@ -358,11 +358,39 @@ function ringsToPath(path: Path2D, rings: number[][], k: number) {
   }
 }
 
-export async function loadWorld(url: string, bdtopoUrl?: string): Promise<World> {
+/**
+ * Fetches JSON, reporting progress as a fraction. Compressed responses don't
+ * say their unpacked size, so `expected` bytes stand in for it.
+ */
+async function fetchJson(url: string, expected: number, onProgress?: (f: number) => void) {
+  const res = await fetch(url);
+  if (!onProgress || !res.body) return res.json();
+  const len = Number(res.headers.get("content-length"));
+  const total = len && !res.headers.get("content-encoding") ? len : expected;
+  const reader = res.body.getReader();
+  const parts: Uint8Array[] = [];
+  let got = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    parts.push(value);
+    got += value.length;
+    onProgress(Math.min(0.99, got / total));
+  }
+  const all = new Uint8Array(got);
+  let at = 0;
+  for (const p of parts) { all.set(p, at); at += p.length; }
+  return JSON.parse(new TextDecoder().decode(all));
+}
+
+export async function loadWorld(url: string, bdtopoUrl?: string, onProgress?: (f: number) => void): Promise<World> {
   const [raw, bdRaw]: [Raw, { rows: BdRow[] } | null] = await Promise.all([
-    fetch(url).then((r) => r.json()),
+    fetchJson(url, 36.6e6, onProgress),
     bdtopoUrl ? fetch(bdtopoUrl).then((r) => (r.ok && r.headers.get("content-type")?.includes("json") ? r.json() : null)) : null,
   ]);
+  // Let the page show "building" before the long synchronous work below.
+  onProgress?.(1);
+  await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
   const k = raw.scale;
   const lat0 = raw.origin.lat;
   const lon0 = raw.origin.lon;

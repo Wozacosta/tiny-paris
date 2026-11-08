@@ -531,9 +531,21 @@ function setupLandmarks() {
   }
 }
 
+/** The loading plaque: download progress, then the build step, then gone. */
+function showLoading(f: number | null) {
+  const el = $("loading");
+  if (f == null) {
+    el.classList.add("done");
+    setTimeout(() => (el.hidden = true), 400);
+    return;
+  }
+  (el.querySelector(".bar i") as HTMLElement).style.width = `${Math.round(f * 100)}%`;
+  el.querySelector(".what")!.textContent = f < 1 ? `Downloading the city · ${Math.round(f * 100)}%` : "Building 100,000 buildings…";
+}
+
 async function main() {
   const [w, transit, pois] = await Promise.all([
-    loadWorld("/data/paris.json", "/data/paris-bdtopo.json"),
+    loadWorld("/data/paris.json", "/data/paris-bdtopo.json", showLoading),
     loadTransit("/data/paris-transit.json"),
     fetch("/data/paris-pois.json").then((r) => (r.ok ? r.json() : { cafes: [] })).catch(() => ({ cafes: [] })),
   ]);
@@ -557,6 +569,7 @@ async function main() {
   document.fonts.ready.then(() => requestPresent());
   requestRender();
   requestAnimationFrame(tick);
+  showLoading(null);
 }
 
 main().catch((err) => {

@@ -11,7 +11,16 @@
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
-    <canvas id="map" aria-label="Isometric map of north-east Paris"></canvas>
+    <canvas id="map" aria-label="Isometric map of Paris"></canvas>
+
+    <div class="loading" id="loading" role="status" aria-live="polite">
+      <div class="plaque">
+        <span class="arrt">Prochain train</span>
+        <h1>Tiny Paris</h1>
+      </div>
+      <div class="bar"><i></i></div>
+      <p class="what">Downloading the city · 0%</p>
+    </div>
 
     <header class="title">
       <div class="plaque">

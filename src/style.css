@@ -557,3 +557,49 @@ h1 {
     width: auto;
   }
 }
+
+/* ---- Loading: a plaque with a jade progress bar --------------------------- */
+
+.loading {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 14px;
+  background: linear-gradient(var(--sky-top), var(--sky-bottom));
+  transition: opacity 0.4s;
+}
+
+.loading.done {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.loading .plaque {
+  width: 300px;
+}
+
+.loading .bar {
+  width: 300px;
+  height: 10px;
+  border-radius: 99px;
+  background: rgba(31, 44, 107, 0.15);
+  overflow: hidden;
+}
+
+.loading .bar i {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: var(--jade);
+  transition: width 0.2s;
+}
+
+.loading .what {
+  margin: 0;
+  font: 500 12px "IBM Plex Mono", ui-monospace, monospace;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
