@@ -301,7 +301,20 @@ function classify(bd: BdRow | undefined, kind: string, h: number, area: number, 
 }
 
 /** Finds, for each building, the BD TOPO record whose centroid lies inside it (tallest wins). */
-function matchBdTopo(rows: BdRow[], rings: Float64Array[][], k: number): (BdRow | undefined)[] {
+/**
+ * Yields to the browser after about 25 ms of work, so the painted map keeps
+ * panning, zooming and drawing while the city is built behind it.
+ */
+function pacer() {
+  let since = performance.now();
+  return async () => {
+    if (performance.now() - since < 25) return;
+    await new Promise((r) => setTimeout(r, 0));
+    since = performance.now();
+  };
+}
+
+async function matchBdTopo(rows: BdRow[], rings: Float64Array[][], k: number, pace: () => Promise<void>): Promise<(BdRow | undefined)[]> {
   const CELL = 40;
   const grid = new Map<string, BdRow[]>();
   for (const r of rows) {
@@ -310,7 +323,9 @@ function matchBdTopo(rows: BdRow[], rings: Float64Array[][], k: number): (BdRow 
     if (!list) grid.set(key, (list = []));
     list.push(r);
   }
-  return rings.map((rs) => {
+  const out: (BdRow | undefined)[] = [];
+  for (const rs of rings) {
+    await pace();
     const o = rs[0];
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (let i = 0; i < o.length; i += 2) {
@@ -327,8 +342,9 @@ function matchBdTopo(rows: BdRow[], rings: Float64Array[][], k: number): (BdRow 
         }
       }
     }
-    return best;
-  });
+    out.push(best);
+  }
+  return out;
 }
 
 function inRing(x: number, y: number, r: Float64Array) {
@@ -449,10 +465,14 @@ export async function loadWorld(url: string, bdtopoUrl?: string, onProgress?: (f
   const ky = (Math.PI / 180) * R;
   const project = (lon: number, lat: number): [number, number] => [(lon - lon0) * kx, -(lat - lat0) * ky];
 
+  const pace = pacer();
   const allRings = raw.buildings.map((b) => b.r.map((r) => Float64Array.from(r, (v) => v / k)));
-  const bdMatch = bdRaw ? matchBdTopo(bdRaw.rows, allRings, k) : [];
+  const bdMatch = bdRaw ? await matchBdTopo(bdRaw.rows, allRings, k, pace) : [];
 
-  const buildings: Building[] = raw.buildings.map((b, bi) => {
+  const buildings: Building[] = [];
+  for (let bi = 0; bi < raw.buildings.length; bi++) {
+    await pace();
+    let b = raw.buildings[bi];
     const rings = allRings[bi];
     const bd = bdMatch[bi];
     // BD TOPO surveyed heights beat our guesses; OSM-tagged heights win over both.
@@ -480,8 +500,8 @@ export async function loadWorld(url: string, bdtopoUrl?: string, onProgress?: (f
     });
     const top = Math.max(h, ...domes.map((d) => d.base + d.drum + d.dome * 1.25));
     const info = bd && bd[6] && !b.i?.start_date ? { ...b.i, start_date: String(bd[6]) } : b.i;
-    return { rings, h, mansard, cx, cy, white: WHITE.has(name), tone: hash(cy * 0.37, cx * 1.91), style, roof, kind, domes, top, info };
-  });
+    buildings.push({ rings, h, mansard, cx, cy, white: WHITE.has(name), tone: hash(cy * 0.37, cx * 1.91), style, roof, kind, domes, top, info });
+  }
   // The Grande Arche is mapped as three overlapping solid outlines; export.ts
   // draws it as the open frame it is, so they stay flat.
   const arche = buildings.find((b) => b.info?.name === GRANDE_ARCHE);
@@ -521,7 +541,10 @@ export async function loadWorld(url: string, bdtopoUrl?: string, onProgress?: (f
   const parks = new Path2D();
   const pitches = new Path2D();
   const cemeteries = new Path2D();
-  for (const p of raw.parks) ringsToPath(p.k === "pitch" ? pitches : p.k === "cemetery" ? cemeteries : parks, p.r, k);
+  for (const p of raw.parks) {
+    await pace();
+    ringsToPath(p.k === "pitch" ? pitches : p.k === "cemetery" ? cemeteries : parks, p.r, k);
+  }
   const water = new Path2D();
   for (const w of raw.water) ringsToPath(water, w, k);
   const onWater = waterGrid(raw.water, k, raw.bounds);
@@ -531,6 +554,7 @@ export async function loadWorld(url: string, bdtopoUrl?: string, onProgress?: (f
   // One stroked path per width so the whole network is a handful of calls.
   const byWidth = new Map<string, { width: number; color: RoadColor; path: Path2D }>();
   for (const r of raw.roads) {
+    await pace();
     const color: RoadColor = r.k === "rail" ? "rail" : ["footway", "path", "cycleway", "pedestrian"].includes(r.k) ? "path" : "road";
     const key = `${r.w}:${color}`;
     let g = byWidth.get(key);
@@ -544,6 +568,7 @@ export async function loadWorld(url: string, bdtopoUrl?: string, onProgress?: (f
   const SHADOW_CELL = 500;
   const shadowCells = new Map<string, { x: number; y: number; path: Path2D }>();
   for (const b of buildings) {
+    await pace();
     const x = Math.floor(b.cx / SHADOW_CELL), y = Math.floor(b.cy / SHADOW_CELL), key = `${x},${y}`;
     let cell = shadowCells.get(key);
     if (!cell) shadowCells.set(key, (cell = { x: x * SHADOW_CELL, y: y * SHADOW_CELL, path: new Path2D() }));
@@ -556,7 +581,9 @@ export async function loadWorld(url: string, bdtopoUrl?: string, onProgress?: (f
   // inside a building.
   const CELL = 50;
   const cells = new Map<string, number[]>();
-  buildings.forEach((b, i) => {
+  for (let i = 0; i < buildings.length; i++) {
+    await pace();
+    const b = buildings[i];
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     const r0 = b.rings[0];
     for (let j = 0; j < r0.length; j += 2) {
@@ -570,7 +597,7 @@ export async function loadWorld(url: string, bdtopoUrl?: string, onProgress?: (f
         else cells.set(key, [i]);
       }
     }
-  });
+  }
   const indoors = (x: number, y: number) =>
     (cells.get(`${Math.floor(x / CELL)},${Math.floor(y / CELL)}`) ?? []).some((i) => pointInRing(x, y, buildings[i].rings[0]));
   const throughBuilding = (flat: Float64Array) => {
@@ -587,6 +614,7 @@ export async function loadWorld(url: string, bdtopoUrl?: string, onProgress?: (f
   const junctions = new Map<string, number[]>();
   for (const r of raw.roads) {
     if (!STREETS.has(r.k)) continue;
+    await pace();
     const flat = Float64Array.from(r.p, (v) => v / k);
     if (r.k === "service" && throughBuilding(flat)) continue;
     const lane = makeLane(flat, r.w / 2, MAJOR.has(r.k), r.k);
@@ -600,6 +628,7 @@ export async function loadWorld(url: string, bdtopoUrl?: string, onProgress?: (f
   for (const r of raw.roads) {
     const walk = WALKS.has(r.k);
     if (!walk && r.k !== "rail") continue;
+    await pace();
     const flat = Float64Array.from(r.p, (v) => v / k);
     if (walk && throughBuilding(flat)) continue;
     const lane = makeLane(flat, r.w / 2, false, r.k);
@@ -619,12 +648,14 @@ export async function loadWorld(url: string, bdtopoUrl?: string, onProgress?: (f
 
   const trees = new Float64Array(raw.trees.length * 2);
   const treeShadows = new Path2D();
-  raw.trees.forEach(([x, y], i) => {
+  for (let i = 0; i < raw.trees.length; i++) {
+    if (i % 2000 === 0) await pace();
+    const [x, y] = raw.trees[i];
     trees[i * 2] = x / k;
     trees[i * 2 + 1] = y / k;
     treeShadows.moveTo(x / k + 4.5, y / k + 1);
     treeShadows.ellipse(x / k + 1, y / k + 1, 3.5, 3.5, 0, 0, Math.PI * 2);
-  });
+  }
 
 
   return {

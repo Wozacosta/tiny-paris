@@ -569,6 +569,22 @@ function showLoading(f: number | null) {
   el.querySelector(".what")!.textContent = f < 1 ? `Downloading the city · ${Math.round(f * 100)}%` : "Building 100,000 buildings…";
 }
 
+/**
+ * The pill shown while the city loads behind the painting: download progress
+ * (0–1), then building (1), then starting the traffic (2), then gone (null).
+ */
+function showStreets(f: number | null) {
+  const el = $("streets");
+  if (f == null) {
+    el.classList.add("done");
+    setTimeout(() => (el.hidden = true), 400);
+    return;
+  }
+  el.hidden = false;
+  el.querySelector(".t")!.textContent = f < 1 ? "Loading streets & traffic" : f < 2 ? "Building the city" : "Starting the traffic";
+  el.querySelector(".pct")!.textContent = f < 1 ? `${Math.round(f * 100)}%` : "";
+}
+
 // Vercel Web Analytics: page views, no cookies.
 inject();
 
@@ -592,16 +608,15 @@ async function main() {
   }
 
   const [w, transit, pois] = await Promise.all([
-    loadWorld("/data/paris.json", "/data/paris-bdtopo.json", (f) => {
-      if (!painted) return showLoading(f);
-      $("stats").textContent = f < 1 ? `Loading the streets · ${Math.round(f * 100)}%` : "Starting the traffic…";
-    }),
+    loadWorld("/data/paris.json", "/data/paris-bdtopo.json", (f) => (painted ? showStreets(f) : showLoading(f))),
     loadTransit("/data/paris-transit.json"),
     fetch("/data/paris-pois.json").then((r) => (r.ok ? r.json() : { cafes: [] })).catch(() => ({ cafes: [] })),
   ]);
   transit.cafes = (pois.cafes as [number, number, number, number][]).map(([x, y, kind, out]) => [x / 10, y / 10, kind, out]);
   world = w;
   if (new URLSearchParams(location.search).has("export")) installExport(world);
+  showStreets(2);
+  await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
   traffic = new Traffic(world, transit);
   Sprites.load().then((sp) => traffic.setSprites(sp));
   const n = traffic.count;
@@ -613,6 +628,7 @@ async function main() {
   requestRender();
   requestAnimationFrame(tick);
   showLoading(null);
+  showStreets(null);
 }
 
 main().catch((err) => {
