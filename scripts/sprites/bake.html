@@ -8,12 +8,16 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import * as SkeletonUtils from "three/addons/utils/SkeletonUtils.js";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 
 const Z = 1.15;
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.setClearColor(0x000000, 0);
 const loader = new GLTFLoader();
+// Soft studio reflections for car paint and glass.
+const pmrem = new THREE.PMREMGenerator(renderer);
+const studio = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 const cache = new Map();
 const load = async (name) => {
   if (!cache.has(name)) cache.set(name, await loader.loadAsync(`/scripts/sprites/models/${name}.glb`));
@@ -154,6 +158,110 @@ function bus() {
   pod.position.set(0, H + 0.12, -1.5);
   g.add(pod);
   wheels(g, [[-1.1, 3.6], [1.1, 3.6], [-1.1, -2.6], [1.1, -2.6]], 0.48, 0.3);
+  return { group: g, length: L };
+}
+
+/**
+ * A car with real proportions, from side profiles extruded across its width:
+ * the painted lower body up to the window line, a narrower glass cabin on
+ * top with a painted roof and pillars, bumpers, lights, mirrors and wheels.
+ * Faces +Z. Shapes are in metres; `cabin` gives where the glasshouse meets
+ * the window line at the back, the roof's rear and front ends, and where the
+ * windscreen meets the bonnet, along the car from back (−L/2) to front.
+ */
+const CAR_SHAPES = {
+  hatchback: { L: 4.0, W: 1.76, H: 1.47, belt: 0.97, bonnet: 0.8, clear: 0.16, r: 0.31, cabin: [-1.9, -1.62, 0.28, 1.02], tail: 0.92 },
+  sedan: { L: 4.6, W: 1.82, H: 1.45, belt: 0.95, bonnet: 0.8, clear: 0.15, r: 0.32, cabin: [-1.32, -0.86, 0.5, 1.3], tail: 0.9 },
+  suv: { L: 4.6, W: 1.88, H: 1.7, belt: 1.12, bonnet: 1.0, clear: 0.22, r: 0.37, cabin: [-2.18, -2.02, 0.62, 1.32], tail: 1.06 },
+  van: { L: 5.0, W: 1.95, H: 1.98, belt: 1.15, bonnet: 1.02, clear: 0.2, r: 0.34, cabin: [-2.47, -2.45, 1.32, 1.9], tail: 1.1 },
+};
+
+function car(type, paint, opts = {}) {
+  const s = CAR_SHAPES[type];
+  const { L, W, H, belt, bonnet, clear, r } = s;
+  const [cRear, roofRear, roofFront, cFront] = s.cabin;
+  const g = new THREE.Group();
+  const paintMat = mat(paint, { roughness: 0.32, metalness: 0.05 });
+  const glass = mat(0x141c25, { roughness: 0.05, metalness: 0.3 });
+  const trim = mat(0x26272b, { roughness: 0.7 });
+  // A side profile [(along, up)...] extruded across `width`, centred.
+  const prism = (pts, width, material, bevel = 0.05) => {
+    // Corners are rounded: each point is replaced by a short curve through it.
+    const shape = new THREE.Shape();
+    const n = pts.length, k = 0.28;
+    pts.forEach(([z, y], i) => {
+      const [pz, py] = pts[(i + n - 1) % n], [nz, ny] = pts[(i + 1) % n];
+      const a = [z + (pz - z) * k, y + (py - y) * k], b = [z + (nz - z) * k, y + (ny - y) * k];
+      if (i === 0) shape.moveTo(a[0], a[1]);
+      else shape.lineTo(a[0], a[1]);
+      shape.quadraticCurveTo(z, y, b[0], b[1]);
+    });
+    shape.closePath();
+    const geo = new THREE.ExtrudeGeometry(shape, { depth: width - 2 * bevel, bevelEnabled: bevel > 0, bevelThickness: bevel, bevelSize: bevel, bevelSegments: 3, curveSegments: 6 });
+    geo.translate(0, 0, -(width - 2 * bevel) / 2);
+    geo.rotateY(-Math.PI / 2);
+    return new THREE.Mesh(geo, material);
+  };
+  const back = -L / 2, front = L / 2;
+  // Lower body: bumpers, tail, rear deck or hatch base, bonnet sloping to the nose.
+  g.add(prism([
+    [back + 0.12, clear + 0.06], [back, clear + 0.2], [back, s.tail - 0.1], [back + 0.1, s.tail],
+    [cRear, belt], [cFront, belt], [front - 0.25, bonnet], [front, bonnet - 0.14],
+    [front, clear + 0.2], [front - 0.14, clear + 0.06],
+  ], W, paintMat));
+  // Glasshouse, a little narrower than the body.
+  const cabinW = W * 0.9;
+  g.add(prism([[cRear, belt - 0.02], [roofRear, H - 0.05], [roofFront, H - 0.05], [cFront, belt - 0.02]], cabinW, glass, 0.04));
+  // Roof panel and pillars in the body colour.
+  const roof = prism([[roofRear - 0.02, H - 0.08], [roofRear + 0.04, H], [roofFront - 0.04, H], [roofFront + 0.02, H - 0.08]], cabinW + 0.01, paintMat, 0.03);
+  g.add(roof);
+  const pillar = (zBase, zTop) => {
+    for (const side of [-1, 1]) {
+      const p = prism([[zBase - 0.05, belt], [zTop - 0.05, H - 0.06], [zTop + 0.05, H - 0.06], [zBase + 0.05, belt]], 0.03, paintMat, 0);
+      p.position.x = side * (cabinW / 2 + 0.005);
+      g.add(p);
+    }
+  };
+  pillar((cRear + roofRear) / 2 + 0.05, roofRear + 0.05);
+  pillar((roofRear + roofFront) / 2, (roofRear + roofFront) / 2);
+  // Bumpers.
+  for (const z of [back + 0.03, front - 0.03]) {
+    const b = new THREE.Mesh(new RoundedBoxGeometry(W + 0.02, 0.2, 0.18, 2, 0.05), trim);
+    b.position.set(0, clear + 0.14, z);
+    g.add(b);
+  }
+  // Lights: headlights at the front corners, tail lights at the back.
+  for (const side of [-1, 1]) {
+    const hl = new THREE.Mesh(new RoundedBoxGeometry(0.42, 0.13, 0.08, 2, 0.03), mat(0xf6f3e6, { roughness: 0.2, emissive: 0x6a6658 }));
+    hl.position.set(side * (W / 2 - 0.3), bonnet - 0.2, front - 0.03);
+    g.add(hl);
+    const tl = new THREE.Mesh(new RoundedBoxGeometry(0.36, 0.12, 0.06, 2, 0.03), mat(0xb3121b, { roughness: 0.3, emissive: 0x3a0508 }));
+    tl.position.set(side * (W / 2 - 0.22), s.tail - 0.22, back + 0.02);
+    g.add(tl);
+    const mirror = new THREE.Mesh(new RoundedBoxGeometry(0.16, 0.12, 0.08, 2, 0.03), paintMat);
+    mirror.position.set(side * (W / 2 + 0.06), belt + 0.06, cFront - 0.12);
+    g.add(mirror);
+  }
+  // Wheels with silver hubs, set into the body.
+  const wz = [back + (type === "van" ? 0.85 : 0.75), front - (type === "van" ? 0.95 : 0.85)];
+  const wheelGeo = new THREE.CylinderGeometry(r, r, 0.22, 20);
+  wheelGeo.rotateZ(Math.PI / 2);
+  const hubGeo = new THREE.CylinderGeometry(r * 0.55, r * 0.55, 0.23, 14);
+  hubGeo.rotateZ(Math.PI / 2);
+  for (const z of wz) for (const side of [-1, 1]) {
+    const w = new THREE.Mesh(wheelGeo, mat(0x161618, { roughness: 0.95 }));
+    w.position.set(side * (W / 2 - 0.12), r, z);
+    g.add(w);
+    const h = new THREE.Mesh(hubGeo, mat(0xa9adb3, { roughness: 0.35, metalness: 0.7 }));
+    h.position.copy(w.position);
+    g.add(h);
+  }
+  // Paris taxi: the "TAXI PARISIEN" roof light, lit green when free.
+  if (opts.taxi) {
+    const sign = new THREE.Mesh(new RoundedBoxGeometry(0.55, 0.13, 0.2, 2, 0.04), mat(0xf4f4ee, { emissive: 0x2f6b3a, roughness: 0.3 }));
+    sign.position.set(0, H + 0.065, (roofRear + roofFront) / 2 + 0.2);
+    g.add(sign);
+  }
   return { group: g, length: L };
 }
 
@@ -391,7 +499,8 @@ window.bake = async (spec) => {
       const rider = await person(spec.name, "drive", 0);
       rider.position.set(0, 0.42, -0.12);
       obj.add(rider);
-    } else if (spec.kind === "bus") obj = bus().group;
+    } else if (spec.kind === "car") obj = car(spec.shape, parseInt(spec.paint.slice(1), 16), { taxi: spec.taxi }).group;
+    else if (spec.kind === "bus") obj = bus().group;
     else if (spec.kind === "metro") obj = metroCar().group;
     else if (spec.kind === "rail") obj = railCar(spec.style).group;
     else if (spec.kind === "peniche") obj = peniche().group;
@@ -425,6 +534,7 @@ window.bake = async (spec) => {
       holder.add(obj);
       const scene = new THREE.Scene();
       lights(scene);
+      if (spec.kind === "car") { scene.environment = studio; scene.environmentIntensity = 0.3; }
       scene.add(holder);
       const cam = isoCamera(P, cellW, cellH, anchorY, R);
       // WebGL's origin is bottom-left.

@@ -1,7 +1,8 @@
 // Bakes vehicle, boat and people sprites for the map from 3D models.
 //   node scripts/sprites/bake.mjs [--only name,name]
 // Writes public/sprites/<name>.webp and public/sprites/sprites.json.
-// Models: Kenney Car Kit and Mini Characters (CC0), plus procedural ones in bake.html.
+// Models: procedural cars, buses, trains and boats in bake.html, plus Kenney
+// Car Kit (special vehicles) and Mini Characters (CC0).
 
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -11,19 +12,23 @@ import { chromium } from "playwright-core";
 
 const { values: opt } = parseArgs({ options: { only: { type: "string" } } });
 
+// Everyday traffic: procedural cars with real proportions (bake.html car()).
+// Paris traffic is mostly small hatchbacks and saloons in white, grey and black.
+const CARS_PROC = [
+  ["car-white", "hatchback", "#eeeeea"],
+  ["car-black", "sedan", "#24262b"],
+  ["car-grey", "hatchback", "#80868e"],
+  ["car-silver", "sedan", "#bfc4ca"],
+  ["car-blue", "hatchback", "#2c5592"],
+  ["car-red", "hatchback", "#a8302a"],
+  ["suv-dark", "suv", "#363b43"],
+  ["suv-white", "suv", "#e8e7e2"],
+  ["van-white", "van", "#f1f1ee"],
+  ["taxi", "sedan", "#1f2125", true],
+];
+// Special vehicles: Kenney Car Kit models.
 const CARS = [
-  // Paris traffic is mostly small hatchbacks and saloons in white, grey and black.
-  ["car-white", "sedan", 4.2, [["auto", "#f2f2ef"]]],
-  ["car-black", "sedan", 4.2, [["auto", "#2a2c31"]]],
-  ["car-grey", "hatchback-sports", 4.0, [["auto", "#8d939b"]]],
-  ["car-silver", "sedan-sports", 4.3, [["auto", "#c7ccd2"]]],
-  ["car-blue", "hatchback-sports", 4.0, [["auto", "#2f5d9e"]]],
-  ["car-red", "sedan", 4.2, [["auto", "#b8352e"]]],
-  ["suv-dark", "suv", 4.6, [["auto", "#3b4048"]]],
-  ["suv-white", "suv-luxury", 4.8, [["auto", "#ecebe6"]]],
-  ["van-white", "van", 5.0, [["auto", "#f4f4f1"]]],
   ["delivery", "delivery", 5.6, null],
-  ["taxi", "taxi", 4.6, [["auto", "#2a2c31"]]],
   ["police", "police", 4.6, null],
   ["ambulance", "ambulance", 5.8, null],
   ["firetruck", "firetruck", 8.5, null],
@@ -35,6 +40,7 @@ const PEOPLE = [
 ];
 
 const specs = [
+  ...CARS_PROC.map(([id, shape, paint, taxi]) => ({ id, kind: "car", shape, paint, taxi, dirs: 32, P: 24 })),
   ...CARS.map(([id, name, length, swaps]) => ({ id, kind: "glb", name, length, swaps, dirs: 16, P: 24 })),
   { id: "bus", kind: "bus", dirs: 16, P: 20 },
   { id: "metro", kind: "metro", dirs: 16, P: 20 },
