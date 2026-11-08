@@ -207,7 +207,7 @@ h1 {
   text-decoration-color: currentColor;
 }
 
-/* ---- Controls: métro line bullets ---------------------------------------- */
+/* ---- Controls: an enamel panel, each option with its line bullet -------- */
 
 .controls {
   position: fixed;
@@ -215,44 +215,70 @@ h1 {
   right: 16px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-}
-
-.controls button {
-  width: 38px;
-  height: 38px;
-  border-radius: 50%;
-  font: 700 19px/1 "Barlow Condensed", sans-serif;
+  width: 128px;
+  padding: 5px;
   color: #fff;
+  background: var(--enamel);
+  border: 3px solid var(--frame);
+  border-radius: 7px;
+  box-shadow:
+    inset 0 0 0 1.5px rgba(255, 255, 255, 0.7),
+    0 6px 18px rgba(20, 24, 60, 0.28);
+}
+
+.controls .zoom {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.controls .zoom button {
+  height: 32px;
+  border-radius: 4px;
+  font: 700 22px/1 "Barlow Condensed", sans-serif;
+  color: var(--enamel);
+  background: #fff;
+}
+
+.controls .zoom button:hover {
+  background: var(--m1);
+}
+
+.controls .row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border-radius: 4px;
+  font: 600 15px/1 "Barlow Condensed", sans-serif;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-align: left;
+}
+
+.controls .row:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* Off: a ring in the line colour. On: the bullet fills in. */
+.controls .row i {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2.5px solid var(--c);
+}
+
+.controls .row[aria-pressed="true"] i {
   background: var(--c);
-  box-shadow:
-    0 0 0 2.5px #fff,
-    0 3px 8px rgba(20, 24, 60, 0.3);
-  transition: transform 0.12s;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.85);
 }
 
-.controls button:hover {
-  transform: scale(1.08);
-}
-
-#zoom-in { --c: var(--m1); color: #1d1f2e; }
-#zoom-out { --c: var(--m2); }
-#theme { --c: var(--m8); color: #1d1f2e; }
-#pixel { --c: var(--m4); }
-#painted { --c: var(--m5); }
-#home { --c: var(--m6); color: #1d1f2e; }
-
-#pixel[aria-pressed="false"],
-#painted[aria-pressed="false"] {
-  background: color-mix(in srgb, var(--c) 35%, #8a8a95);
-}
-
-#pixel[aria-pressed="true"],
-#painted[aria-pressed="true"] {
-  box-shadow:
-    0 0 0 2.5px #fff,
-    0 0 0 5px var(--c),
-    0 3px 8px rgba(20, 24, 60, 0.3);
+/* An action, not a switch: always filled. */
+.controls .row i.home {
+  background: var(--c);
+  border-radius: 3px;
 }
 
 /* ---- Go to: the line map in the carriages -------------------------------- */

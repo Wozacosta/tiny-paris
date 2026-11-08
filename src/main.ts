@@ -339,7 +339,7 @@ if (import.meta.env.DEV) {
 function setTheme(t: Theme) {
   theme = t;
   document.body.classList.toggle("night", t === NIGHT);
-  $("theme").textContent = t === NIGHT ? "☀" : "☾";
+  $("theme").setAttribute("aria-pressed", String(t === NIGHT));
   requestRender();
 }
 
