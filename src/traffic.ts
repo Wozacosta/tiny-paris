@@ -7,6 +7,7 @@
 import { BIKE_ROADS, CAR_ROADS, TRUCK_ROADS, type Lane, type Transit, type World } from "./model";
 import { depthOf, worldToIso, type Rotation } from "./render";
 import { Life } from "./life";
+import { MOVERS_ZOOM, PEOPLE_ZOOM } from "./streetlife";
 import { box, dot, groundShadow, person, sample, shade, SHIRTS, SKINS, type Sample } from "./shapes";
 import type { Sprites } from "./sprites";
 
@@ -196,7 +197,7 @@ export class Traffic {
     return { x: best < 40 ? px : x, y: best < 40 ? py : y, tx, ty, docks, bikes };
   }
 
-  /** A random vehicle to follow: a bus on tonight's/today's lines, a Vélib', or a benne. */
+  /** A random vehicle to follow: a bus on tonight's/today's lines, a Vélib', or a garbage truck. */
   pickToFollow(kind: "bus" | "velib" | "truck", night: boolean): number | null {
     const ids = this.vehicles
       .map((v, i) => ({ v, i }))
@@ -216,7 +217,7 @@ export class Traffic {
       return { x: p.x, y: p.y, z: 2, label: `Bus ${this.transit.lines[this.busLine[v.lane]].ref}` };
     }
     const p = sample(v.kind === TRAIN ? this.world.metro[v.lane] : this.world.streets[v.lane], v.s);
-    const label = v.kind === BIKE ? (v.color >= 200 ? "Vélib' électrique" : "Vélib'") : v.kind === TRUCK ? (v.wait > 0 ? "Benne · collecting" : "Benne") : "Bus";
+    const label = v.kind === BIKE ? (v.color >= 200 ? "Vélib' électrique" : "Vélib'") : v.kind === TRUCK ? (v.wait > 0 ? "Garbage truck · collecting" : "Garbage truck") : "Bus";
     return { x: p.x, y: p.y, z: p.z + 1, label };
   }
 
@@ -232,9 +233,11 @@ export class Traffic {
     return c;
   }
 
-  step(dt: number) {
+  /** `zoom`: the camera's; below MOVERS_ZOOM nothing is visible, so nothing moves. */
+  step(dt: number, zoom: number) {
     this.time += dt;
-    this.life.step(dt);
+    this.life.step(dt, zoom);
+    if (zoom < MOVERS_ZOOM) return;
     const { streets, junctions, metro } = this.world;
     for (const v of this.vehicles) {
       if (v.wait > 0) {
@@ -330,9 +333,9 @@ export class Traffic {
       }
     }
 
-    if (cssZoom >= 0.55) {
+    if (cssZoom >= MOVERS_ZOOM) {
       const { streets, metro } = this.world;
-      const small = cssZoom >= 1.3; // bikes and people only once they're visible
+      const small = cssZoom >= PEOPLE_ZOOM; // bikes and people only once they're visible
       for (const v of only == null ? this.vehicles : [this.vehicles[only]]) {
         if (v.kind === TRAIN) {
           const l = metro[v.lane];

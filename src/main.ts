@@ -2,7 +2,8 @@ import { inject } from "@vercel/analytics";
 import { loadTransit, loadWorld, type Building, type World } from "./model";
 import { LANDMARKS } from "./landmarks";
 import { buildRotView, drawGround, drawHighlight, drawStructures, occluders, pick, worldToIso, type Camera, type Rotation, type RotView } from "./render";
-import { DAY, NIGHT, type Theme } from "./theme";
+import { DAY, type Theme } from "./theme";
+import { MOVERS_ZOOM } from "./streetlife";
 import { Traffic } from "./traffic";
 import { Sprites } from "./sprites";
 import { installExport } from "./export";
@@ -25,7 +26,7 @@ const views: RotView[] = [];
 const rotation: Rotation = 3;
 let painted: PaintedLayer | null = null;
 let showPainted = true;
-let theme: Theme = DAY;
+const theme: Theme = DAY;
 let res = 1;
 /** Camera with zoom in CSS pixels per iso unit; converted to canvas pixels on draw. */
 const cam: Camera = { cx: 0, cy: 0, zoom: 1 };
@@ -51,6 +52,8 @@ const moversCtx = movers.getContext("2d")!;
 const buildCtx = buildSnap.getContext("2d")!;
 const SNAP_MARGIN = 0.2;
 let snapCam: Camera | null = null;
+/** Snapshot pixels per canvas pixel: under the painting the vector map is hidden, so half will do. */
+let snapScale = 1;
 let lastFullMs = 0;
 let lastMove = 0;
 let settleTimer = 0;
@@ -82,6 +85,7 @@ function frame() {
 
 /** True once the snapshot is too blurry or no longer covers the screen. */
 function snapshotStale(s: Camera) {
+  if (needsBuildings(cam.zoom) !== needsBuildings(s.zoom)) return true;
   const k = cam.zoom / s.zoom;
   if (k > 1.8 || k < 0.75) return true;
   const dx = Math.abs(s.cx - cam.cx) * cam.zoom;
@@ -89,9 +93,18 @@ function snapshotStale(s: Camera) {
   return dx > innerWidth * SNAP_MARGIN * k || dy > innerHeight * SNAP_MARGIN * k;
 }
 
+/**
+ * Under the painting, the vector buildings only cut vehicles out where they pass
+ * behind one, and close up the occluders do that instead.
+ */
+function needsBuildings(zoom: number) {
+  return !(painted && showPainted) || (zoom >= MOVERS_ZOOM && zoom < OCCLUDE_ZOOM);
+}
+
 function fullRender() {
-  const w = Math.round(canvas.width * (1 + 2 * SNAP_MARGIN));
-  const h = Math.round(canvas.height * (1 + 2 * SNAP_MARGIN));
+  snapScale = painted && showPainted ? 0.5 : 1;
+  const w = Math.round(canvas.width * (1 + 2 * SNAP_MARGIN) * snapScale);
+  const h = Math.round(canvas.height * (1 + 2 * SNAP_MARGIN) * snapScale);
   for (const c of [groundSnap, buildSnap]) {
     if (c.width !== w || c.height !== h) {
       c.width = w;
@@ -99,9 +112,13 @@ function fullRender() {
     }
   }
   const t = performance.now();
-  const c = { ...cam, zoom: cam.zoom * res };
-  drawGround(groundCtx, world, view(), c, theme, res);
-  drawStructures(buildCtx, world, view(), c, theme, res);
+  const c = { ...cam, zoom: cam.zoom * res * snapScale };
+  drawGround(groundCtx, world, view(), c, theme, res * snapScale);
+  if (needsBuildings(cam.zoom)) drawStructures(buildCtx, world, view(), c, theme, res * snapScale);
+  else {
+    buildCtx.setTransform(1, 0, 0, 1, 0, 0);
+    buildCtx.clearRect(0, 0, w, h);
+  }
   lastFullMs = performance.now() - t;
   snapCam = { ...cam };
 }
@@ -109,7 +126,7 @@ function fullRender() {
 function present() {
   const s = snapCam;
   if (!s) return;
-  const k = cam.zoom / s.zoom;
+  const k = cam.zoom / s.zoom / snapScale;
   const z = cam.zoom * res;
   const blit = (g: CanvasRenderingContext2D, img: HTMLCanvasElement) => {
     g.setTransform(
@@ -122,8 +139,9 @@ function present() {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   blit(ctx, groundSnap);
-  blit(ctx, buildSnap);
-  if (painted && showPainted) painted.draw(ctx, { ...cam, zoom: z }, rotation);
+  // The painting covers every building; the layer still masks the movers below.
+  if (!(painted && showPainted)) blit(ctx, buildSnap);
+  else painted.draw(ctx, { ...cam, zoom: z }, rotation);
   traffic.showViaduct = !(painted && showPainted);
 
   // Moving things go on their own layer, cut away wherever the live building
@@ -233,7 +251,7 @@ let lastTick = 0;
 function tick(now: number) {
   const dt = Math.min(0.1, (now - (lastTick || now)) / 1000);
   lastTick = now;
-  traffic.step(dt);
+  traffic.step(dt, following != null ? Infinity : cam.zoom);
   if (following != null) {
     // Glide after the vehicle; ease in to street-level zoom when starting.
     const p = traffic.where(following);
@@ -246,7 +264,7 @@ function tick(now: number) {
       if (Math.abs(cam.zoom / followZoom - 1) < 0.02) followZoom = null;
     }
     requestRender(true);
-  } else if (cam.zoom >= 0.55 && !frameQueued && !document.hidden) present();
+  } else if (cam.zoom >= MOVERS_ZOOM && !frameQueued && !document.hidden) present();
   requestAnimationFrame(tick);
 }
 
@@ -254,7 +272,7 @@ let following: number | null = null;
 let followZoom: number | null = null;
 
 function follow(kind: "bus" | "velib" | "truck" | null) {
-  following = kind ? traffic.pickToFollow(kind, theme === NIGHT) : null;
+  following = kind ? traffic.pickToFollow(kind, false) : null;
   followZoom = following != null ? Math.max(cam.zoom, kind === "velib" ? 5 : 4) : null;
   if (following != null) flight++;
   for (const b of document.querySelectorAll<HTMLButtonElement>("[data-follow]")) {
@@ -334,17 +352,10 @@ if (import.meta.env.DEV) {
   (window as unknown as { __select: unknown }).__select = (name: string) => showInfo(world.buildings.findIndex((b) => b.info?.name === name));
 }
 
-function setTheme(t: Theme) {
-  theme = t;
-  document.body.classList.toggle("night", t === NIGHT);
-  $("theme").setAttribute("aria-pressed", String(t === NIGHT));
-  requestRender();
-}
-
 function togglePainted() {
   showPainted = !showPainted;
   $("painted").setAttribute("aria-pressed", String(showPainted));
-  requestPresent();
+  requestRender(); // the vector map underneath is drawn differently with and without it
 }
 
 function showInfo(i: number | null) {
@@ -477,7 +488,6 @@ function setupInput() {
     const k = e.key.toLowerCase();
     if (k === "+" || k === "=") zoomAt(1.4);
     else if (k === "-" || k === "_") zoomAt(1 / 1.4);
-    else if (k === "n") setTheme(theme === DAY ? NIGHT : DAY);
     else if (k === "a") togglePainted();
     else if (k === "w") wander();
     else if (k === "h") {
@@ -492,7 +502,6 @@ function setupInput() {
 
   $("zoom-in").onclick = () => zoomAt(1.5);
   $("zoom-out").onclick = () => zoomAt(1 / 1.5);
-  $("theme").onclick = () => setTheme(theme === DAY ? NIGHT : DAY);
   $("painted").onclick = togglePainted;
   $("home").onclick = () => {
     follow(null);
@@ -564,7 +573,7 @@ async function main() {
   const fmt = (v: number) => v.toLocaleString("en");
   $("stats").textContent =
     `${fmt(world.buildings.length)} buildings · ${fmt(n.cars)} cars · ${fmt(n.buses)} buses on ${n.lines} RATP lines · ` +
-    `${fmt(n.bikes)} bikes · ${n.stations} Vélib' · ${n.trucks} bennes · ${n.trains} métros`;
+    `${fmt(n.bikes)} bikes · ${fmt(n.stations)} Vélib' stations · ${n.trucks} garbage trucks · ${n.trains} métros`;
   resize();
   Object.assign(cam, fitBounds());
   setupInput();

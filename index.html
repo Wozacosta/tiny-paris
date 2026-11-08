@@ -3,8 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>Tiny Paris · North-East</title>
-    <link rel="icon" href="/favicon.svg" />
+    <title>Tiny Paris</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
@@ -24,11 +25,11 @@
 
     <header class="title">
       <div class="plaque">
-        <span class="arrt">1<sup>er</sup> – 20<sup>e</sup> Arr<sup>t</sup></span>
+        <span class="arrt">1<sup>er</sup> – 20<sup>e</sup> · La Défense</span>
         <h1>Tiny Paris</h1>
       </div>
       <div class="ticket">
-        <div class="ticket-head"><span>Ticket</span><span>Paris intra-muros</span></div>
+        <div class="ticket-head"><span>Ticket</span><span>Paris &amp; La Défense</span></div>
         <p id="stats">Laying the cobblestones…</p>
         <div class="stripe" aria-hidden="true"></div>
         <p class="by">
@@ -45,7 +46,6 @@
         <button id="zoom-in" title="Zoom in (+)" aria-label="Zoom in">+</button>
         <button id="zoom-out" title="Zoom out (−)" aria-label="Zoom out">−</button>
       </div>
-      <button id="theme" class="row" title="Day / night (N)" aria-pressed="false"><i style="--c: var(--m8)"></i>Night</button>
       <button id="painted" class="row" title="Painted map or plain 3D map (A)" aria-pressed="true" hidden><i style="--c: var(--m5)"></i>Painted</button>
       <button id="home" class="row" title="Whole map (H)"><i class="home" style="--c: var(--m6)"></i>Whole map</button>
     </nav>
@@ -57,7 +57,7 @@
           <span>Follow</span>
           <button data-follow="bus" title="Ride along with an RATP bus">🚌 Bus</button>
           <button data-follow="velib" title="Ride along with a Vélib'">🚲 Vélib'</button>
-          <button data-follow="truck" title="Ride along with a garbage truck">🚛 Benne</button>
+          <button data-follow="truck" title="Ride along with a garbage truck">🚛 Garbage truck</button>
         </div>
       </div>
       <div class="places-bar">

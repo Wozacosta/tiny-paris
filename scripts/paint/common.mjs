@@ -50,12 +50,24 @@ export async function openBlankPage() {
 
 /**
  * Area outline in iso units: the map's ground outline with its far side
- * raised by up to HEADROOM, so tall buildings along it aren't cut.
+ * raised by up to HEADROOM, and lifted over any tall building just inside it,
+ * so towers along it aren't cut. `tall` from tinyExport.tall().
  */
-export function areaPolygon(outline) {
+export function areaPolygon(outline, tall = []) {
   const ys = outline.map((p) => p[1]);
   const cy = (Math.min(...ys) + Math.max(...ys)) / 2, half = (Math.max(...ys) - Math.min(...ys)) / 2;
-  return outline.map(([x, y]) => [x, y - HEADROOM * Math.max(0, Math.min(1, ((cy - y) / half) * 3))]);
+  // Every few iso units, so the outline can lift just above one tower.
+  const dense = outline.flatMap(([x, y], i) => {
+    const [nx, ny] = outline[(i + 1) % outline.length];
+    const n = Math.max(1, Math.ceil(Math.hypot(nx - x, ny - y) / 8));
+    return Array.from({ length: n }, (_, k) => [x + ((nx - x) * k) / n, y + ((ny - y) * k) / n]);
+  });
+  return dense.map(([x, y]) => {
+    let top = y - HEADROOM * Math.max(0, Math.min(1, ((cy - y) / half) * 3));
+    // Clear the top of any tall building standing just inside, below this point.
+    for (const [tx, ty, tt] of tall) if (Math.abs(tx - x) < 40 && ty > y && ty - y < 600) top = Math.min(top, tt - 30);
+    return [x, top];
+  });
 }
 
 /**

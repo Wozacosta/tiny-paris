@@ -407,7 +407,9 @@ export function drawGround(ctx: CanvasRenderingContext2D, world: World, view: Ro
   ctx.restore();
 }
 
-/** Building layer: buildings, trees and monuments, back to front, on a transparent canvas. */
+/** What occluders() last found near the viewport. */
+let near: { view: RotView; rect: BBox; items: RotView["items"] } | null = null;
+
 /**
  * Buildings and trees in the iso-space rectangle as depth-sorted erasers: each
  * one, drawn in turn with the movers, cuts away whatever is behind it but not
@@ -416,6 +418,12 @@ export function drawGround(ctx: CanvasRenderingContext2D, world: World, view: Ro
  */
 export function occluders(ctx: CanvasRenderingContext2D, world: World, view: RotView, rect: BBox, grow: number) {
   const [vx0, vy0, vx1, vy1] = rect;
+  // The items near a recent viewport, so panning doesn't rescan the whole city every frame.
+  if (!near || near.view !== view || vx0 < near.rect[0] || vy0 < near.rect[1] || vx1 > near.rect[2] || vy1 > near.rect[3]) {
+    const mx = vx1 - vx0, my = vy1 - vy0;
+    const r: BBox = [vx0 - mx, vy0 - my, vx1 + mx, vy1 + my];
+    near = { view, rect: r, items: view.items.filter(({ bbox: b }) => !(b[2] < r[0] || b[0] > r[2] || b[3] < r[1] || b[1] > r[3])) };
+  }
   const out: { depth: number; draw: () => void }[] = [];
   const erase = (fill: (Path2D | null)[], edge: Path2D) => {
     ctx.globalCompositeOperation = "destination-out";
@@ -429,7 +437,7 @@ export function occluders(ctx: CanvasRenderingContext2D, world: World, view: Rot
     }
     ctx.globalCompositeOperation = "source-over";
   };
-  for (const it of view.items) {
+  for (const it of near.items) {
     const [x0, y0, x1, y1] = it.bbox;
     if (x1 < vx0 || x0 > vx1 || y1 < vy0 || y0 > vy1) continue;
     if (it.kind === "b") {
@@ -443,6 +451,7 @@ export function occluders(ctx: CanvasRenderingContext2D, world: World, view: Rot
   return out;
 }
 
+/** Building layer: buildings, trees and monuments, back to front, on a transparent canvas. */
 export function drawStructures(
   ctx: CanvasRenderingContext2D, world: World, view: RotView, cam: Camera, theme: Theme, res: number, photo?: Photo, roofShape?: RoofShape,
   extras: Extra[] = [],

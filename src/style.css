@@ -28,16 +28,6 @@
   --m13: #6ec4e8;
 }
 
-body.night {
-  --sky-top: #0b1230;
-  --sky-bottom: #26305a;
-  --ink: #f1ecff;
-  --muted: #b3aed0;
-  --ticket: #d9cca6;
-  --panel: #1b2140;
-  --rule: rgba(255, 255, 255, 0.14);
-}
-
 * {
   box-sizing: border-box;
 }

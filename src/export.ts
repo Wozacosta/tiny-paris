@@ -14,6 +14,8 @@ export interface TinyExport {
   corners(r: Rotation, w: number, s: number, e: number, n: number): [number, number][];
   /** The map's outline in iso space at ground level, for a view rotation. */
   outline(r: Rotation): [number, number][];
+  /** Buildings at least `min` metres tall, in iso space: [x, ground y, top y]. */
+  tall(r: Rotation, min: number): [number, number, number][];
   /**
    * PNG data URL of the day map (no traffic, labels or UI) for one camera.
    * If the aerial data is downloaded (scripts/paint/0-ortho.mjs, 0-eaves.mjs),
@@ -67,9 +69,13 @@ function eiffelPieces(world: World, r: Rotation): Extra[] {
   const b = world.buildings.find((x) => x.info?.name === "Tour Eiffel");
   if (!b) return [];
   const { cx, cy } = b;
-  // Axis-aligned frustum: square of half-size a at z0 to half-size c at z1.
+  // The tower is square to the Champ de Mars, 44° off the map grid (its OSM footprint),
+  // so one face looks at the Seine.
+  const cos = Math.cos((44 * Math.PI) / 180), sin = Math.sin((44 * Math.PI) / 180);
+  const at = (dx: number, dy: number): [number, number] => [cx + dx * cos - dy * sin, cy + dx * sin + dy * cos];
+  // Frustum around (dx, dy) from the centre: square of half-size a at z0 to half-size c at z1.
   const frustum = (ctx: CanvasRenderingContext2D, x: number, y: number, z0: number, z1: number, a: number, c: number, side: string, top: string | null) => {
-    const sq = (h: number, z: number) => [[-h, -h], [h, -h], [h, h], [-h, h]].map(([dx, dy]) => worldToIso(r, x + dx, y + dy, z));
+    const sq = (h: number, z: number) => [[-h, -h], [h, -h], [h, h], [-h, h]].map(([dx, dy]) => worldToIso(r, ...at(x + dx, y + dy), z));
     const lo = sq(a, z0), hi = sq(c, z1);
     poly(ctx, hull([...lo, ...hi]), side);
     if (top) poly(ctx, hi, top);
@@ -83,15 +89,15 @@ function eiffelPieces(world: World, r: Rotation): Extra[] {
         const off = (z: number) => 50 - (z / 57) * 22 - Math.sin((z / 57) * Math.PI) * 4;
         const w = (z: number) => 13 - (z / 57) * 4;
         const mid = (z0 + z1) / 2;
-        frustum(ctx, cx + sx * off(mid), cy + sy * off(mid), z0, z1, w(z0), w(z1), k % 2 ? BRONZE : DARK, null);
+        frustum(ctx, sx * off(mid), sy * off(mid), z0, z1, w(z0), w(z1), k % 2 ? BRONZE : DARK, null);
       }
     }
-    frustum(ctx, cx, cy, 55, 59, 36, 36, DARK, LIT); // first platform
-    frustum(ctx, cx, cy, 59, 113, 30, 17, BRONZE, null);
-    frustum(ctx, cx, cy, 113, 117, 20, 20, DARK, LIT); // second platform
-    frustum(ctx, cx, cy, 117, 274, 15, 5, BRONZE, null);
-    frustum(ctx, cx, cy, 274, 280, 7, 7, DARK, LIT); // top platform
-    frustum(ctx, cx, cy, 280, 325, 2.5, 0.6, BRONZE, null); // antenna
+    frustum(ctx, 0, 0, 55, 59, 36, 36, DARK, LIT); // first platform
+    frustum(ctx, 0, 0, 59, 113, 30, 17, BRONZE, null);
+    frustum(ctx, 0, 0, 113, 117, 20, 20, DARK, LIT); // second platform
+    frustum(ctx, 0, 0, 117, 274, 15, 5, BRONZE, null);
+    frustum(ctx, 0, 0, 274, 280, 7, 7, DARK, LIT); // top platform
+    frustum(ctx, 0, 0, 280, 325, 2.5, 0.6, BRONZE, null); // antenna
   };
   return [{ depth: depthOf(r, cx, cy), draw }];
 }
@@ -469,6 +475,12 @@ export function installExport(world: World) {
     outline(r) {
       const b = world.boundary;
       return Array.from({ length: b.length / 2 }, (_, k) => worldToIso(r, b[k * 2], b[k * 2 + 1]));
+    },
+    tall(r, min) {
+      return world.buildings.filter((b) => b.top >= min).map((b) => {
+        const [x, y] = worldToIso(r, b.cx, b.cy);
+        return [x, y, worldToIso(r, b.cx, b.cy, b.top)[1]];
+      });
     },
     stoneMask(r, cx, cy, zoom, width, height) {
       const view = (views[r] ??= buildRotView(world, r));

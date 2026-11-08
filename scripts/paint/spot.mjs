@@ -7,7 +7,7 @@
 // paint/spots/<slug>.png and adds it to paint/spots.json, which 3-stitch.mjs
 // pastes over everything else.
 
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { DIR, ROTATION, ZOOM, openExportPage } from "./common.mjs";
@@ -46,8 +46,19 @@ const x = Math.round(gx), y = Math.round(gy0 - Number(opt.lift));
 const { page, close } = await openExportPage();
 let painted, base;
 try {
+  // Spot repaints made since the last stitch aren't in the chunks yet: lay
+  // them over it (inside most of their radius, where the stitch keeps them),
+  // so neighbours fixed earlier in a batch are seen, and kept, as fixed.
+  const spots = existsSync(`${DIR}/spots.json`) ? JSON.parse(await readFile(`${DIR}/spots.json`, "utf8")) : [];
+  const stitched = statSync("public/painted/manifest.json").mtimeMs;
+  const fresh = [];
+  for (const sp of spots) {
+    const file = `${DIR}/spots/${sp.name}.png`;
+    if (sp.name === opt.name || !existsSync(file) || statSync(file).mtimeMs < stitched || Math.abs(sp.x - x) > (sp.size + S) / 2 || Math.abs(sp.y - y) > (sp.size + S) / 2) continue;
+    fresh.push({ ...sp, data: (await readFile(file)).toString("base64") });
+  }
   // The painting around the spot, from the level-0 chunks.
-  painted = await page.evaluate(async ({ x, y, S }) => {
+  painted = await page.evaluate(async ({ x, y, S, fresh }) => {
     const c = document.createElement("canvas");
     c.width = c.height = S;
     const g = c.getContext("2d");
@@ -60,8 +71,19 @@ try {
         g.drawImage(img, cx * 1024 - x0, cy * 1024 - y0);
       }
     }
+    for (const sp of fresh) {
+      const img = new Image();
+      img.src = `data:image/png;base64,${sp.data}`;
+      await img.decode();
+      g.save();
+      g.beginPath();
+      g.arc(sp.x - x0, sp.y + (sp.dy ?? 0) - y0, sp.r * 0.8, 0, 2 * Math.PI);
+      g.clip();
+      g.drawImage(img, sp.x - sp.size / 2 - x0, sp.y - sp.size / 2 - y0, sp.size, sp.size);
+      g.restore();
+    }
     return c.toDataURL("image/png").split(",")[1];
-  }, { x, y, S });
+  }, { x, y, S, fresh });
   // The base render of the same spot, from the current map data.
   base = await page.evaluate(
     ({ R, cx, cy, Z, S }) => window.tinyExport.render(R, cx, cy, Z, S, S),

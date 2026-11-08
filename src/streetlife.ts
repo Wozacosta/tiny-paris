@@ -59,6 +59,10 @@ interface Train {
   wait: number;
 }
 
+/** Camera zooms (CSS px per metre) below which vehicles and boats, and then people, are neither drawn nor simulated. */
+export const MOVERS_ZOOM = 1;
+export const PEOPLE_ZOOM = 2.2;
+
 const WALKERS = 60000;
 const BLANKETS = ["#c94f4f", "#3f6fb0", "#e0b23a", "#4d9a6b", "#d9d2c3", "#e48aa8"];
 const TRAIN_TOP = 16; // m/s, ~60 km/h inside the city
@@ -86,6 +90,7 @@ function ringArea(r: Float64Array) {
 
 export class StreetLife {
   private walkers: Walker[] = [];
+  private slice = 0;
   /** Per walk lane: midpoint and half-length, to skip whole lanes out of view. */
   private laneMid: Float64Array;
   private terraces: Terrace[] = [];
@@ -296,11 +301,15 @@ export class StreetLife {
     }
   }
 
-  step(dt: number) {
+  /** `zoom`: what is too small to see stays where it is. */
+  step(dt: number, zoom: number) {
     this.time += dt;
     const { walks, walkJunctions } = this.world;
-    for (const w of this.walkers) {
-      w.s += w.dir * w.speed * dt;
+    // A quarter of them per frame, each moving four frames' worth.
+    const part = this.slice++ % 4;
+    for (let i = part; zoom >= PEOPLE_ZOOM && i < this.walkers.length; i += 4) {
+      const w = this.walkers[i];
+      w.s += w.dir * w.speed * dt * 4;
       const l = walks[w.lane];
       if (w.s >= 0 && w.s <= l.len) continue;
       const key = w.s > l.len ? l.b : l.a;
@@ -316,7 +325,7 @@ export class StreetLife {
       if (nl.a === key) { w.s = 0; w.dir = 1; }
       else { w.s = nl.len; w.dir = -1; }
     }
-    for (const t of this.trains) {
+    for (const t of zoom >= MOVERS_ZOOM ? this.trains : []) {
       if (t.wait > 0) {
         t.wait -= dt;
         continue;
@@ -342,7 +351,7 @@ export class StreetLife {
 
   collect(items: Item[], ctx: CanvasRenderingContext2D, r: Rotation, inView: InView, theme: Theme, cssZoom: number) {
     this.useSprites = !!this.sprites && cssZoom >= 1.1;
-    if (cssZoom >= 0.55) {
+    if (cssZoom >= MOVERS_ZOOM) {
       for (const t of this.trains) {
         if (t.wait > 0 && t.dir === -1) continue; // off the map
         for (let k = 0; k < t.cars; k++) {
@@ -355,32 +364,16 @@ export class StreetLife {
         }
       }
     }
-    if (cssZoom < 1.3) return;
+    if (cssZoom < PEOPLE_ZOOM) return;
     const { walks } = this.world;
     const m = this.laneMid;
-    // From afar people are a pixel or two: one batch of dots, no sorting.
-    const far = cssZoom < 2.2;
-    const dots: number[] = [];
     for (const w of this.walkers) {
       const i = w.lane * 3;
       if (!inView(m[i], m[i + 1], 0, m[i + 2] + 4)) continue;
       const p = sample(walks[w.lane], w.s);
       const x = p.x - p.ty * w.side, y = p.y + p.tx * w.side;
       if (!inView(x, y, 0, 4)) continue;
-      if (far) dots.push(x, y, w.look);
-      else items.push({ depth: depthOf(r, x, y), draw: () => this.drawWalker(ctx, r, w, x, y, p.tx * w.dir, p.ty * w.dir) });
-    }
-    if (dots.length) {
-      items.push({
-        depth: -Infinity,
-        draw: () => {
-          for (let i = 0; i < dots.length; i += 3) {
-            const [sx, sy] = worldToIso(r, dots[i], dots[i + 1], 0);
-            ctx.fillStyle = SHIRTS[dots[i + 2] % SHIRTS.length];
-            ctx.fillRect(sx - 0.35, sy - 1.5, 0.7, 1.5);
-          }
-        },
-      });
+      items.push({ depth: depthOf(r, x, y), draw: () => this.drawWalker(ctx, r, w, x, y, p.tx * w.dir, p.ty * w.dir) });
     }
     for (const t of this.terraces) {
       if (!inView(t.x, t.y, 0, 8)) continue;

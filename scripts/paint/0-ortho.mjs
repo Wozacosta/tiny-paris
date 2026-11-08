@@ -23,13 +23,13 @@ const [bx0, by0, bx1, by1] = raw.bounds;
 const AX = -2562.5, AY = -2226.5;
 const x0 = AX - Math.ceil((AX - bx0) / SIDE) * SIDE, y0 = AY - Math.ceil((AY - by0) / SIDE) * SIDE;
 const cols = Math.ceil((bx1 - x0) / SIDE), rows = Math.ceil((by1 - y0) / SIDE);
-// Tiles of the first map, named from its corner, renamed to this grid.
-const shiftI = Math.round((AX - x0) / SIDE), shiftJ = Math.round((AY - y0) / SIDE);
 const out = `${DIR}/ortho`;
 await mkdir(out, { recursive: true });
 const prev = existsSync(`${out}/index.json`) ? JSON.parse(await readFile(`${out}/index.json`, "utf8")) : null;
+// Tiles downloaded for a smaller map, named from its corner, renamed to this grid.
+const shiftI = prev && (prev.x0 - x0) / SIDE, shiftJ = prev && (prev.y0 - y0) / SIDE;
 if (prev && (prev.x0 !== x0 || prev.y0 !== y0)) {
-  if (prev.x0 !== AX || prev.y0 !== AY) throw new Error("paint/ortho has an unexpected grid; delete it to start over");
+  if (!Number.isInteger(shiftI) || !Number.isInteger(shiftJ) || shiftI < 0 || shiftJ < 0) throw new Error("paint/ortho has an unexpected grid; delete it to start over");
   // Highest first, so a rename never lands on a tile not yet moved.
   const old = [];
   for (let j = 0; j < prev.rows; j++) for (let i = 0; i < prev.cols; i++) old.push([i, j]);
@@ -38,7 +38,7 @@ if (prev && (prev.x0 !== x0 || prev.y0 !== y0)) {
     if (existsSync(`${out}/${i}_${j}.${ext}`)) await rename(`${out}/${i}_${j}.${ext}`, `${out}/${i + shiftI}_${j + shiftJ}.${ext}`);
   }
   await writeFile(`${out}/index.json`, JSON.stringify({ ...prev, x0, y0, cols, rows }));
-  console.log(`moved the first map's tiles by ${shiftI}, ${shiftJ}`);
+  console.log(`moved the downloaded tiles by ${shiftI}, ${shiftJ}`);
 }
 let done = 0;
 const jobs = [];

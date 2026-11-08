@@ -138,6 +138,8 @@ const DOMES: Record<string, Dome[]> = {
 // OSM heights are patchy for landmarks; these read better.
 const HEIGHT_OVERRIDES: Record<string, number> = {
   "Gare du Nord": 30,
+  // Tagged 1 m in OSM.
+  "Cœur Défense": 161,
   // A low glass plinth: the painter draws the pyramid itself.
   "Pyramide du Louvre": 1,
   "Basilique du Sacré-Cœur": 30,
@@ -259,6 +261,9 @@ const STYLE_OVERRIDES: Record<string, { style: Style; roof: RoofKind }> = {
   "Philharmonie de Paris": { style: "recent", roof: "slate" },
   "Pyramide du Louvre": { style: "recent", roof: "glass" },
   "Palais du Louvre": { style: "stone", roof: "slate" },
+  // Dark red-brown cladding, which the stitch would otherwise turn cream.
+  "Hôtel Novotel Paris Tour Eiffel": { style: "brick", roof: "flat" },
+  "Église Saint-Jean de Montmartre": { style: "brick", roof: "slate" },
 };
 
 function classify(bd: BdRow | undefined, kind: string, h: number, area: number, name: string, notable: boolean): { style: Style; roof: RoofKind } {

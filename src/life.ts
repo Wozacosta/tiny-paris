@@ -7,7 +7,7 @@ import { makeLane, type Lane, type Transit, type World } from "./model";
 import { depthOf, worldToIso, type Rotation } from "./render";
 import { box, dot, person, sample, shade, SHIRTS, SKINS } from "./shapes";
 import type { Sprites } from "./sprites";
-import { StreetLife } from "./streetlife";
+import { MOVERS_ZOOM, PEOPLE_ZOOM, StreetLife } from "./streetlife";
 import type { Theme } from "./theme";
 
 export interface Item {
@@ -258,10 +258,10 @@ export class Life {
     }
   }
 
-  step(dt: number) {
+  step(dt: number, zoom: number) {
     this.time += dt;
-    this.street.step(dt);
-    for (const b of this.boats) {
+    this.street.step(dt, zoom);
+    for (const b of zoom >= MOVERS_ZOOM ? this.boats : []) {
       b.s += b.dir * b.speed * dt;
       if (b.s < 0 || b.s > b.lane.len) {
         b.dir = b.dir === 1 ? -1 : 1;
@@ -274,7 +274,7 @@ export class Life {
     this.useSprites = !!this.sprites && cssZoom >= 1.1;
     this.street.collect(items, ctx, r, inView, theme, cssZoom);
     const onMap = this.world.onMap;
-    if (cssZoom >= 0.55) {
+    if (cssZoom >= MOVERS_ZOOM) {
       for (const b of this.boats) {
         const p = sample(b.lane, b.s);
         if (!onMap(p.x, p.y, 12) || !inView(p.x, p.y, 0, 40)) continue;
@@ -287,7 +287,7 @@ export class Life {
         items.push({ depth: depthOf(r, p.x, p.y), draw: () => this.drawBoat(ctx, r, b, p.x, p.y, tx, ty, theme) });
       }
     }
-    if (cssZoom < 1.3) return;
+    if (cssZoom < PEOPLE_ZOOM) return;
     for (const party of this.parties) {
       if (!inView(party.x, party.y, 0, 10)) continue;
       items.push({ depth: depthOf(r, party.x, party.y), draw: () => this.drawParty(ctx, r, party, theme) });

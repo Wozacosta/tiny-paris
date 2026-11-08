@@ -56,17 +56,22 @@ export class PaintedLayer {
     this.m.levels.forEach((l, i) => {
       if (l.scale >= want) target = i;
     });
-    // Coarsest level first as a backdrop while sharper chunks load.
-    const last = this.m.levels.length - 1;
-    for (const li of target === last ? [last] : [last, target]) {
+    // Chunks of a level in view, with their images where loaded.
+    const inView = (li: number) => {
       const { scale, chunks } = this.m.levels[li];
       const size = this.m.chunk / scale / this.m.zoom; // chunk size in iso units
+      const out: { x: number; y: number; size: number; img: HTMLImageElement | null }[] = [];
       for (const [c, r] of chunks) {
         const x = this.m.origin[0] + c * size, y = this.m.origin[1] + r * size;
         if (x > vx1 || y > vy1 || x + size < vx0 || y + size < vy0) continue;
-        const img = this.image(li, c, r);
-        if (img) ctx.drawImage(img, x, y, size, size);
+        out.push({ x, y, size, img: this.image(li, c, r) });
       }
-    }
+      return out;
+    };
+    const sharp = inView(target);
+    // The coarsest level as a backdrop, only while sharper chunks load.
+    const last = this.m.levels.length - 1;
+    const layers = target !== last && sharp.some((t) => !t.img) ? [inView(last), sharp] : [sharp];
+    for (const layer of layers) for (const t of layer) if (t.img) ctx.drawImage(t.img, t.x, t.y, t.size, t.size);
   }
 }

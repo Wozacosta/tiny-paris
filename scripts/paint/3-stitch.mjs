@@ -1,6 +1,6 @@
 // Blends painted tiles into one mosaic, cuts it to the area outline and writes
 // web-ready chunks the app draws in place of the live map.
-//   node scripts/paint/3-stitch.mjs [--from paint/painted]
+//   node scripts/paint/3-stitch.mjs [--from paint/painted-p]
 // Writes public/painted/<level>/<col>_<row>.webp and public/painted/manifest.json.
 
 import { existsSync } from "node:fs";
@@ -9,7 +9,7 @@ import { parseArgs } from "node:util";
 import { DIR, openBlankPage } from "./common.mjs";
 import { LANDMARKS, landmarkPixel, ownerTile } from "./landmarks.mjs";
 
-const { values: opt } = parseArgs({ options: { from: { type: "string", default: `${DIR}/painted` } } });
+const { values: opt } = parseArgs({ options: { from: { type: "string", default: `${DIR}/painted-p` } } });
 const OUT = "public/painted";
 const CHUNK = 1024;
 const LEVELS = [1, 0.5, 0.25];

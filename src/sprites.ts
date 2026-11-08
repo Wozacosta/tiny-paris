@@ -26,6 +26,8 @@ const ROT: [number, number, number, number][] = [
 export class Sprites {
   private meta: Record<string, Meta> = {};
   private images = new Map<string, HTMLImageElement>();
+  /** Each sheet halved again and again, so small sprites aren't shrunk from full size every frame. */
+  private mips = new Map<string, ImageBitmap[]>();
 
   static async load(): Promise<Sprites> {
     const s = new Sprites();
@@ -42,10 +44,23 @@ export class Sprites {
     let img = this.images.get(id);
     if (!img) {
       img = new Image();
+      img.onload = () => this.shrink(id, img!);
       img.src = `/sprites/${id}.webp`;
       this.images.set(id, img);
     }
     return img.complete && img.naturalWidth ? img : null;
+  }
+
+  private async shrink(id: string, img: HTMLImageElement) {
+    const levels: ImageBitmap[] = [];
+    let src: CanvasImageSource = img;
+    for (let w = img.naturalWidth, h = img.naturalHeight, k = 0; k < 4; k++) {
+      w = Math.max(1, Math.round(w / 2));
+      h = Math.max(1, Math.round(h / 2));
+      src = await createImageBitmap(src, { resizeWidth: w, resizeHeight: h, resizeQuality: "high" });
+      levels.push(src);
+    }
+    this.mips.set(id, levels);
   }
 
   /**
@@ -64,7 +79,12 @@ export class Sprites {
     const row = m.frames > 1 ? Math.floor(((t % 1) + 1) % 1 * m.frames) : 0;
     const [sx, sy] = worldToIso(r, x, y, z);
     const k = scale / m.P;
-    ctx.drawImage(img, col * m.cellW, row * m.cellH, m.cellW, m.cellH, sx - m.anchorX * k, sy - m.anchorY * k, m.cellW * k, m.cellH * k);
+    // The smallest level still at least as sharp as the screen needs.
+    const mips = this.mips.get(id);
+    const level = mips ? Math.max(0, Math.min(mips.length, Math.floor(-Math.log2(ctx.getTransform().a * k)))) : 0;
+    const src = level ? mips![level - 1] : img;
+    const f = level ? src.width / img.naturalWidth : 1;
+    ctx.drawImage(src, col * m.cellW * f, row * m.cellH * f, m.cellW * f, m.cellH * f, sx - m.anchorX * k, sy - m.anchorY * k, m.cellW * k, m.cellH * k);
     return true;
   }
 }
