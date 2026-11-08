@@ -1,5 +1,6 @@
 // Grows the map beyond the périphérique: adds Neuilly-sur-Seine and La Défense,
-// so the axis from the Arc de Triomphe runs on to the Grande Arche.
+// so the axis from the Arc de Triomphe runs on to the Grande Arche, and a few
+// landmarks just outside it.
 //   node scripts/extend-boundary.mjs   (after fetch-boundary.mjs)
 // Reads scripts/boundary.json's Paris ring and writes its `ring` as the union.
 
@@ -39,8 +40,13 @@ const kx = 73000, ky = 111200; // metres per degree here
 const near = (p, ring) => ring.some((q) => Math.hypot((p[0] - q[0]) * kx, (p[1] - q[1]) * ky) < 400);
 const bridge = hull([...neuilly.filter((p) => near(p, b.paris)), ...b.paris.filter((p) => near(p, neuilly))]);
 
+// Just past the périphérique: Parc des Princes, Stade Jean-Bouin and
+// Roland-Garros at Porte d'Auteuil, and the Tours Mercuriales at Porte de Bagnolet.
+const auteuil = [[2.2600, 48.8395], [2.2505, 48.8395], [2.2500, 48.8440], [2.2420, 48.8450], [2.2420, 48.8488], [2.2545, 48.8492], [2.2600, 48.8480]];
+const bagnolet = [[2.4110, 48.8682], [2.4198, 48.8682], [2.4198, 48.8632], [2.4110, 48.8630]];
+
 const close = (r) => (eq(r[0], r.at(-1)) ? r : [...r, r[0]]);
-const union = polygonClipping.union([close(b.paris)], [close(neuilly)], [close(defense)], [close(bridge)]);
+const union = polygonClipping.union([close(b.paris)], [close(neuilly)], [close(defense)], [close(bridge)], [close(auteuil)], [close(bagnolet)]);
 if (union.length !== 1) throw new Error(`the areas don't join up: ${union.length} pieces`);
 b.ring = union[0][0].slice(0, -1);
 await writeFile(FILE, JSON.stringify(b));

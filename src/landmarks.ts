@@ -123,4 +123,9 @@ export const LANDMARKS: Landmark[] = [
   { name: "Tour Alto", note: "La Défense", lon: 2.25117, lat: 48.88938, zoom: 2.8, z: 70, top: 180 },
   { name: "Tours Société Générale", note: "La Défense", lon: 2.23081, lat: 48.89197, zoom: 2.8, z: 70, top: 185 },
   { name: "Tours Aillaud", note: "Nanterre", lon: 2.22787, lat: 48.88892, zoom: 3, z: 40, top: 120 },
+  // Just past the périphérique.
+  { name: "Parc des Princes", note: "16e", lon: 2.253, lat: 48.8414, zoom: 2.8 },
+  { name: "Roland-Garros", note: "16e", lon: 2.2492, lat: 48.8472, zoom: 2.8 },
+  { name: "Tours Mercuriales", note: "Bagnolet", lon: 2.4153, lat: 48.8676, zoom: 3, z: 60, top: 150 },
+  { name: "Ballon Generali", note: "15e", lon: 2.274, lat: 48.84142, zoom: 3, z: 40, top: 75 },
 ];

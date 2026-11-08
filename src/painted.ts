@@ -13,8 +13,15 @@ interface Manifest {
   levels: { scale: number; chunks: [number, number][] }[];
 }
 
+/** Decoded chunks kept at most, about 4 MB each. */
+const KEEP = 64;
+
 export class PaintedLayer {
-  private images = new Map<string, HTMLImageElement>();
+  // Chunks are decoded off the main thread (createImageBitmap) before they are
+  // drawn: an <img> decodes on its first draw, which stalls zooming.
+  private chunks = new Map<string, ImageBitmap | "loading">();
+  private used = new Map<string, number>();
+  private frame = 0;
 
   private constructor(private m: Manifest, private onLoad: () => void) {}
 
@@ -30,19 +37,42 @@ export class PaintedLayer {
 
   private image(level: number, c: number, r: number) {
     const key = `${level}/${c}_${r}`;
-    let img = this.images.get(key);
-    if (!img) {
-      img = new Image();
-      img.onload = this.onLoad;
-      img.src = `/painted/${key}.webp`;
-      this.images.set(key, img);
+    const got = this.chunks.get(key);
+    if (got === undefined) {
+      this.chunks.set(key, "loading");
+      fetch(`/painted/${key}.webp`)
+        .then((res) => res.blob())
+        .then((blob) => createImageBitmap(blob))
+        .then((bitmap) => {
+          this.chunks.set(key, bitmap);
+          this.used.set(key, this.frame);
+          this.evict();
+          this.onLoad();
+        })
+        .catch(() => this.chunks.delete(key));
+      return null;
     }
-    return img.complete && img.naturalWidth ? img : null;
+    if (got === "loading") return null;
+    this.used.set(key, this.frame);
+    return got;
+  }
+
+  /** Frees the chunks unused for longest, past KEEP, never those of this frame. */
+  private evict() {
+    const loaded = [...this.used].filter(([, f]) => f < this.frame).sort((a, b) => a[1] - b[1]);
+    for (let n = this.used.size - KEEP, i = 0; n > 0 && i < loaded.length; n--, i++) {
+      const [key] = loaded[i];
+      const b = this.chunks.get(key);
+      if (b && b !== "loading") b.close();
+      this.chunks.delete(key);
+      this.used.delete(key);
+    }
   }
 
   /** `cam.zoom` is canvas pixels per iso unit; the context must be untransformed. */
   draw(ctx: CanvasRenderingContext2D, cam: Camera, rotation: Rotation) {
     if (rotation !== this.m.rotation) return;
+    this.frame++;
     const { width: cw, height: ch } = ctx.canvas;
     const z = cam.zoom;
     ctx.setTransform(z, 0, 0, z, cw / 2 - cam.cx * z, ch / 2 - cam.cy * z);
@@ -60,7 +90,7 @@ export class PaintedLayer {
     const inView = (li: number) => {
       const { scale, chunks } = this.m.levels[li];
       const size = this.m.chunk / scale / this.m.zoom; // chunk size in iso units
-      const out: { x: number; y: number; size: number; img: HTMLImageElement | null }[] = [];
+      const out: { x: number; y: number; size: number; img: ImageBitmap | null }[] = [];
       for (const [c, r] of chunks) {
         const x = this.m.origin[0] + c * size, y = this.m.origin[1] + r * size;
         if (x > vx1 || y > vy1 || x + size < vx0 || y + size < vy0) continue;

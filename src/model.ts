@@ -136,6 +136,8 @@ const DOMES: Record<string, Dome[]> = {
 };
 
 // OSM heights are patchy for landmarks; these read better.
+export const GRANDE_ARCHE = "Grande Arche de la Défense";
+
 const HEIGHT_OVERRIDES: Record<string, number> = {
   "Gare du Nord": 30,
   // Tagged 1 m in OSM.
@@ -466,6 +468,12 @@ export async function loadWorld(url: string, bdtopoUrl?: string, onProgress?: (f
     const info = bd && bd[6] && !b.i?.start_date ? { ...b.i, start_date: String(bd[6]) } : b.i;
     return { rings, h, mansard, cx, cy, white: WHITE.has(name), tone: hash(cy * 0.37, cx * 1.91), style, roof, kind, domes, top, info };
   });
+  // The Grande Arche is mapped as three overlapping solid outlines; export.ts
+  // draws it as the open frame it is, so they stay flat.
+  const arche = buildings.find((b) => b.info?.name === GRANDE_ARCHE);
+  if (arche) {
+    for (const b of buildings) if (Math.hypot(b.cx - arche.cx, b.cy - arche.cy) < 75 && b.h > 90) Object.assign(b, { h: 1, top: 1, mansard: 0 });
+  }
 
   const boundary = Float64Array.from(raw.boundary, (v) => v / k);
   const slab = new Path2D();

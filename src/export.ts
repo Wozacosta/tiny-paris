@@ -1,7 +1,7 @@
 // Hooks used by scripts/paint to render base tiles for AI painting.
 // Only installed when the page is opened with ?export.
 
-import type { Building, World } from "./model";
+import { GRANDE_ARCHE, type Building, type World } from "./model";
 import {
   Z, buildRotView, depthOf, drawGround, drawStructures, isoToWorld, worldToIso,
   type Extra, type Photo, type RoofShape, type Rotation, type RotView,
@@ -58,6 +58,51 @@ function viaductPieces(world: World, r: Rotation): Extra[] {
     }
   }
   return out;
+}
+
+/**
+ * The Grande Arche as an open cube for the painter to follow: two side walls,
+ * the roof and the plinth, with the opening along the axis to the Arc de
+ * Triomphe. Inner faces are glass, the rest white marble.
+ */
+function archePieces(world: World, r: Rotation): Extra[] {
+  const b = world.buildings.find((x) => x.info?.name === GRANDE_ARCHE);
+  if (!b) return [];
+  // Along the axis (bearing 116°, towards the Arc) and across it, in world x east, y south.
+  const th = (116 * Math.PI) / 180;
+  const u = [Math.sin(th), -Math.cos(th)], v = [Math.cos(th), Math.sin(th)];
+  const at = (a: number, c: number): [number, number] => [b.cx + u[0] * a + v[0] * c, b.cy + u[1] * a + v[1] * c];
+  const H = 54, T = 18; // half-width, wall and roof thickness
+  const sun = [0.55, -0.5];
+  // A box from (a0, c0) to (a1, c1) across and along, z0 to z1; `inner` marks
+  // the side (±1 across) that faces the opening.
+  const block = (a0: number, a1: number, c0: number, c1: number, z0: number, z1: number, inner: number) => {
+    const faces: { n: number[]; inner: boolean; pts: [number, number][] }[] = [
+      { n: u, inner: false, pts: [at(a1, c0), at(a1, c1)] },
+      { n: [-u[0], -u[1]], inner: false, pts: [at(a0, c1), at(a0, c0)] },
+      { n: v, inner: inner === 1, pts: [at(a1, c1), at(a0, c1)] },
+      { n: [-v[0], -v[1]], inner: inner === -1, pts: [at(a0, c0), at(a1, c0)] },
+    ];
+    const depth = (p: [number, number][]) => depthOf(r, (p[0][0] + p[1][0]) / 2, (p[0][1] + p[1][1]) / 2);
+    faces.sort((f, g) => depth(f.pts) - depth(g.pts));
+    return (ctx: CanvasRenderingContext2D) => {
+      for (const f of faces) {
+        const lit = 0.5 + 0.5 * Math.max(0, f.n[0] * sun[0] + f.n[1] * sun[1]);
+        const col = f.inner ? `hsl(205 18% ${38 + 20 * lit}%)` : `hsl(40 10% ${70 + 22 * lit}%)`;
+        const [p, q] = f.pts;
+        poly(ctx, [worldToIso(r, ...p, z0), worldToIso(r, ...q, z0), worldToIso(r, ...q, z1), worldToIso(r, ...p, z1)], col);
+      }
+      poly(ctx, [at(a0, c0), at(a1, c0), at(a1, c1), at(a0, c1)].map((p) => worldToIso(r, ...p, z1)), "hsl(40 8% 84%)");
+    };
+  };
+  const parts = [
+    { c: -H + T / 2, draw: block(-H, H, -H, -H + T, 0, 110, 1) },
+    { c: H - T / 2, draw: block(-H, H, H - T, H, 0, 110, -1) },
+    { c: 0, draw: block(-H, H, -H + T, H - T, 0, 6, 0) },
+    { c: 0, draw: block(-H, H, -H + T, H - T, 110 - T, 110, 0) },
+  ];
+  // Plinth before roof; the walls by which side is nearer.
+  return parts.map((p, i) => ({ depth: depthOf(r, ...at(0, p.c)) + i * 1e-3, draw: p.draw }));
 }
 
 /**
@@ -197,9 +242,12 @@ async function aerialFor(world: World, r: Rotation, cx: number, cy: number, zoom
   const front = ([sx, sy]: [number, number]) => isoToWorld(r, sx, sy).map((v) => Math.round(v) * CELL) as [number, number];
   const [flx, fly] = front([-1, 0.5]), [frx, fry] = front([1, 0.5]);
 
+  // The Grande Arche's flattened outlines: archePieces() draws it, not the LiDAR.
+  const arche = world.buildings.find((b) => b.info?.name === GRANDE_ARCHE);
+  const nearArche = (b: Building) => !!arche && b.h <= 1 && Math.hypot(b.cx - arche.cx, b.cy - arche.cy) < 75;
   const roofShape: RoofShape = (ctx, idx, z, ox, oy, walls) => {
     const b = world.buildings[idx];
-    if (b.info?.name === "Tour Eiffel") return;
+    if (b.info?.name === "Tour Eiffel" || nearArche(b)) return;
     const eave = b.h;
     const o = b.rings[0];
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -455,7 +503,7 @@ async function eaveWorld(world: World): Promise<World | null> {
   const buildings = world.buildings.map((b, i): Building => {
     const e = eaves[i] / 10;
     // The Eiffel Tower's LiDAR is a lattice: it gets its own shape instead.
-    if (b.info?.name === "Tour Eiffel") return b;
+    if (b.info?.name === "Tour Eiffel" || b.h <= 1) return b;
     return e > 0 ? { ...b, h: e, mansard: 0, domes: [] } : b;
   });
   return { ...world, buildings };
@@ -519,7 +567,7 @@ export function installExport(world: World) {
       const cam = { cx, cy, zoom };
       const air = aerial ? await aerialFor(w, r, cx, cy, zoom, width, height) : undefined;
       drawGround(ground.getContext("2d")!, w, view, cam, DAY, 1, air?.photo);
-      drawStructures(build.getContext("2d")!, w, view, cam, DAY, 1, air?.photo, w === world ? undefined : air?.roofShape, [...viaductPieces(w, r), ...eiffelPieces(w, r)]);
+      drawStructures(build.getContext("2d")!, w, view, cam, DAY, 1, air?.photo, w === world ? undefined : air?.roofShape, [...viaductPieces(w, r), ...eiffelPieces(w, r), ...archePieces(w, r)]);
       const ctx = out.getContext("2d")!;
       ctx.fillStyle = DAY.ground;
       ctx.fillRect(0, 0, width, height);

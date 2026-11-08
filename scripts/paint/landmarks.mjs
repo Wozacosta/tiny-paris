@@ -122,6 +122,10 @@ export const LANDMARKS = [
   { name: "Tour Alto", lon: 2.25117, lat: 48.88938, look: "Tour Alto (160 m): a rounded tower of reflective glass that widens as it rises, wider at the top than at its base" },
   { name: "Tours Société Générale", lon: 2.23081, lat: 48.89197, look: "the twin Société Générale towers Alicante and Chassagne (167 m): two identical tall towers of dark blue-grey glass side by side on one base, each with a sharply sloping, inclined roof, next to Tour Granite, a slimmer tower of grey-green glass and pale granite bands also with a steep slanted top" },
   { name: "Tours Aillaud", lon: 2.22787, lat: 48.88892, look: "the Tours Aillaud ('Tours Nuages'): rounded, bulging residential towers with curvy outlines, covered in a mosaic of blue, white and grey cloud patterns, pierced by windows of odd shapes (round, square, star and leaf-shaped)" },
+  { name: "Parc des Princes", lon: 2.253, lat: 48.8414, look: "the Parc des Princes, Paris Saint-Germain's stadium: an oval stadium ringed by fifty curved grey concrete ribs that rise around its outside like a crown, a green football pitch inside and red and blue seats; the Boulevard Périphérique runs beneath it" },
+  { name: "Roland-Garros", lon: 2.2492, lat: 48.8472, look: "Roland-Garros: Court Philippe-Chatrier, a rectangular tennis stadium with steep grey stands around a bright orange clay court under a retractable roof of white fabric panels on steel trusses (open), with the round Court Suzanne-Lenglen and many outside orange clay courts around it among trees" },
+  { name: "Tours Mercuriales", lon: 2.4153, lat: 48.8676, look: "the twin Tours Mercuriales (Levant and Ponant): two identical sheer rectangular towers of dark blue-grey reflective glass with a fine grid and flat tops, standing side by side at Porte de Bagnolet beside the motorway interchange" },
+  { name: "Ballon Generali", lon: 2.274, lat: 48.84142, look: "the Ballon Generali: a huge white spherical tethered balloon with a red band, floating above the central lawn of the Parc André-Citroën on its cable" },
 ];
 
 const lat0 = ORIGIN.lat;
