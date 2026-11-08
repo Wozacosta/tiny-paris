@@ -93,6 +93,21 @@ h1::after {
   font-size: 13px;
 }
 
+.title .by {
+  font-size: 12px;
+}
+
+.title .by a {
+  color: inherit;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  text-underline-offset: 2px;
+}
+
+.title .by a:hover {
+  color: var(--ink);
+  text-decoration-color: currentColor;
+}
+
 button {
   font: inherit;
   color: inherit;
