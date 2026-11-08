@@ -129,3 +129,14 @@ export const LANDMARKS: Landmark[] = [
   { name: "Tours Mercuriales", note: "Bagnolet", lon: 2.4153, lat: 48.8676, zoom: 3, z: 60, top: 150 },
   { name: "Ballon Generali", note: "15e", lon: 2.274, lat: 48.84142, zoom: 3, z: 40, top: 75 },
 ];
+
+/** File-name form of a landmark's name, for its picture in public/thumbs. */
+export const slug = (name: string) =>
+  name
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/œ/g, "oe")
+    .replace(/æ/g, "ae")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");

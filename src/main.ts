@@ -1,6 +1,6 @@
 import { inject } from "@vercel/analytics";
 import { loadFrame, loadTransit, loadWorld, type Building, type MapFrame, type World } from "./model";
-import { LANDMARKS } from "./landmarks";
+import { LANDMARKS, slug, type Landmark } from "./landmarks";
 import { buildRotView, drawGround, drawHighlight, drawStructures, isoToWorld, occluders, pick, worldToIso, type Camera, type Rotation, type RotView } from "./render";
 import { DAY, type Theme } from "./theme";
 import { MOVERS_ZOOM } from "./streetlife";
@@ -311,8 +311,11 @@ function fitBounds() {
   const ys = pts.map((p) => p[1]);
   const bw = Math.max(...xs) - Math.min(...xs);
   const bh = Math.max(...ys) - Math.min(...ys) + 120;
-  minZoom = Math.min(innerWidth / bw, innerHeight / bh) * 0.9;
-  return { cx: (Math.max(...xs) + Math.min(...xs)) / 2, cy: (Math.max(...ys) + Math.min(...ys)) / 2 + 20, zoom: minZoom };
+  // On desktop the line of landmarks covers the bottom: fit the map above it.
+  const below = $("line").offsetHeight ? $("line").offsetHeight + 40 : 0;
+  minZoom = Math.min(innerWidth / bw, (innerHeight - below) / bh) * 0.9;
+  const cy = (Math.max(...ys) + Math.min(...ys)) / 2 + 20 + below / 2 / minZoom;
+  return { cx: (Math.max(...xs) + Math.min(...xs)) / 2, cy, zoom: minZoom };
 }
 
 /** The first view. A phone held upright would show the whole map as a thin
@@ -601,6 +604,15 @@ function togglePlaces(open: boolean) {
   $("places-toggle").setAttribute("aria-expanded", String(open));
 }
 
+function goTo(l: Landmark) {
+  const [x, y] = frame0.project(l.lon, l.lat);
+  showInfo(null);
+  follow(null);
+  togglePlaces(false);
+  flyToWorld(x, y, l.zoom, l.z ?? 10);
+  for (const b of document.querySelectorAll(".line-track button")) b.toggleAttribute("aria-current", b.getAttribute("data-name") === l.name);
+}
+
 function setupLandmarks() {
   $("places-toggle").onclick = () => togglePlaces(!$("places").classList.contains("open"));
   const ul = $("landmarks");
@@ -608,16 +620,52 @@ function setupLandmarks() {
     const li = document.createElement("li");
     const btn = document.createElement("button");
     btn.innerHTML = `${l.name} <small>${l.note}</small>`;
-    btn.onclick = () => {
-      const [x, y] = frame0.project(l.lon, l.lat);
-      showInfo(null);
-      follow(null);
-      togglePlaces(false);
-      flyToWorld(x, y, l.zoom, l.z ?? 10);
-    };
+    btn.onclick = () => goTo(l);
     li.append(btn);
     ul.append(li);
   }
+  setupLine();
+}
+
+/** The desktop strip: a picture per landmark, each a station on the line. */
+function setupLine() {
+  const track = $("line-track");
+  for (const l of LANDMARKS) {
+    const li = document.createElement("li");
+    const btn = document.createElement("button");
+    btn.dataset.name = l.name;
+    btn.title = `${l.name} · ${l.note}`;
+    const img = document.createElement("img");
+    Object.assign(img, { src: `/thumbs/${slug(l.name)}.webp`, alt: "", width: 150, height: 100, loading: "lazy", decoding: "async" });
+    const plate = document.createElement("span");
+    plate.className = "plate";
+    plate.textContent = l.name;
+    btn.append(img, plate);
+    btn.onclick = () => goTo(l);
+    li.append(btn);
+    track.append(li);
+  }
+  // Scroll by a page of stations, less one so there's something to hold on to.
+  const page = (dir: number) => track.scrollBy({ left: dir * Math.max(170, track.clientWidth - 170), behavior: "smooth" });
+  $("line-prev").onclick = () => page(-1);
+  $("line-next").onclick = () => page(1);
+  const ends = () => {
+    ($("line-prev") as HTMLButtonElement).disabled = track.scrollLeft < 4;
+    ($("line-next") as HTMLButtonElement).disabled = track.scrollLeft > track.scrollWidth - track.clientWidth - 4;
+  };
+  track.addEventListener("scroll", ends, { passive: true });
+  addEventListener("resize", ends);
+  ends();
+  // A mouse wheel scrolls up and down; along the line is what it means here.
+  track.addEventListener(
+    "wheel",
+    (e) => {
+      if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+      e.preventDefault();
+      track.scrollLeft += e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+    },
+    { passive: false },
+  );
 }
 
 /** The loading plaque: download progress, then the build step, then gone. */
