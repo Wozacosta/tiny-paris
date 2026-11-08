@@ -1,7 +1,7 @@
 import { inject } from "@vercel/analytics";
 import { loadFrame, loadTransit, loadWorld, type Building, type MapFrame, type World } from "./model";
 import { LANDMARKS } from "./landmarks";
-import { buildRotView, drawGround, drawHighlight, drawStructures, occluders, pick, worldToIso, type Camera, type Rotation, type RotView } from "./render";
+import { buildRotView, drawGround, drawHighlight, drawStructures, isoToWorld, occluders, pick, worldToIso, type Camera, type Rotation, type RotView } from "./render";
 import { DAY, type Theme } from "./theme";
 import { MOVERS_ZOOM } from "./streetlife";
 import { Traffic } from "./traffic";
@@ -388,7 +388,9 @@ function showInfo(i: number | null) {
   const rows: [string, string | HTMLElement][] = [];
   if (t.name) rows.push(["Type", KIND_LABEL[kind] ?? kind.replace(/_/g, " ")]);
   if (t.addr) rows.push(["Address", t.addr]);
-  rows.push(["Height", `${Math.round(b.top)} m${t.height || t["building:levels"] ? "" : " (guessed)"}`]);
+  // A tagged height first: some landmarks are drawn flat for the painter (the Eiffel Tower, the Grande Arche).
+  const tagged = parseFloat(t.height ?? "");
+  rows.push(["Height", `${Math.round(tagged || b.top)} m${t.height || t["building:levels"] ? "" : " (guessed)"}`]);
   if (t["building:levels"]) rows.push(["Floors", t["building:levels"]]);
   if (t.start_date) rows.push(["Built", t.start_date]);
   if (t.wikipedia) {
@@ -412,6 +414,47 @@ function showInfo(i: number | null) {
   );
   card.hidden = false;
   requestPresent();
+}
+
+/** What a report is about: a building, or wherever the view is. */
+let reporting: { building: string | null; lon: number; lat: number; zoom: number } | null = null;
+
+function openReport(building: number | null) {
+  const [x, y] = building != null ? [world.buildings[building].cx, world.buildings[building].cy] : isoToWorld(rotation, cam.cx, cam.cy);
+  const [lon, lat] = frame0.unproject(x, y);
+  const name = building != null ? $("info-title").textContent : null;
+  reporting = { building: name, lon, lat, zoom: cam.zoom };
+  const form = $("report") as HTMLFormElement;
+  form.reset();
+  $("report-about").textContent = name ? `About ${name}` : "About what's in the middle of the screen";
+  $("report-status").textContent = "";
+  (form.querySelector(".send") as HTMLButtonElement).disabled = false;
+  $("info").hidden = true;
+  form.hidden = false;
+}
+
+async function sendReport(e: SubmitEvent) {
+  e.preventDefault();
+  const form = e.target as HTMLFormElement, data = new FormData(form);
+  const send = form.querySelector(".send") as HTMLButtonElement, status = $("report-status");
+  if (data.get("kind") === "other" && !String(data.get("note")).trim()) {
+    status.textContent = "Tell me what's wrong.";
+    return;
+  }
+  send.disabled = true;
+  status.textContent = "Sending…";
+  const res = await fetch("/api/report", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ...reporting, kind: data.get("kind"), note: data.get("note"), website: data.get("website") }),
+  }).catch(() => null);
+  if (res?.ok) {
+    status.textContent = "Thanks! I'll fix it.";
+    setTimeout(() => (form.hidden = true), 1600);
+    return;
+  }
+  status.textContent = res?.status === 429 ? "Too many reports for now, try again later." : "Couldn't send it, try again.";
+  send.disabled = false;
 }
 
 function wander() {
@@ -529,6 +572,10 @@ function setupInput() {
   }
   $("wander").onclick = wander;
   $("info-close").onclick = () => showInfo(null);
+  $("info-report").onclick = () => openReport(state.selected);
+  $("report-view").onclick = () => openReport(null);
+  $("report-close").onclick = () => ($("report").hidden = true);
+  ($("report") as HTMLFormElement).onsubmit = sendReport;
   addEventListener("resize", resize);
 }
 

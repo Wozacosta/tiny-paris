@@ -11,7 +11,8 @@
     "paint": "node scripts/paint/2-paint.mjs",
     "paint:stitch": "node scripts/paint/3-stitch.mjs",
     "data:transit": "node scripts/fetch-transit.mjs",
-    "data:pois": "node scripts/fetch-pois.mjs"
+    "data:pois": "node scripts/fetch-pois.mjs",
+    "reports": "node --env-file=.env.local scripts/reports.mjs"
   },
   "type": "module",
   "devDependencies": {
@@ -23,6 +24,7 @@
   },
   "private": true,
   "dependencies": {
-    "@vercel/analytics": "^2.0.1"
+    "@vercel/analytics": "^2.0.1",
+    "@vercel/blob": "^2.8.2"
   }
 }

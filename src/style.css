@@ -187,9 +187,23 @@ h1 {
   text-underline-offset: 2px;
 }
 
-.ticket .by a:hover {
+.ticket .by a:hover,
+.ticket .by .linkish:hover {
   color: #000;
   text-decoration-color: currentColor;
+}
+
+/* A button that reads as one of the byline's links. */
+.linkish {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  text-underline-offset: 2px;
+  cursor: pointer;
 }
 
 /* ---- Controls: an enamel panel, each option with its line bullet -------- */
@@ -542,7 +556,8 @@ h1 {
   .places {
     display: none;
   }
-  .info {
+  .info,
+  .report {
     left: 16px;
     width: auto;
   }
@@ -642,4 +657,128 @@ h1 {
   to {
     transform: rotate(360deg);
   }
+}
+
+/* ---- Reports: a link under the building card, and the form it opens ---- */
+.info .report-link {
+  display: block;
+  width: 100%;
+  padding: 8px 14px 10px;
+  border: 0;
+  border-top: 1px solid var(--rule);
+  background: none;
+  font: 500 11px "IBM Plex Mono", monospace;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+  text-align: left;
+  cursor: pointer;
+}
+
+.info .report-link:hover {
+  color: var(--ink);
+}
+
+.report {
+  position: fixed;
+  right: 16px;
+  bottom: 40px;
+  z-index: 6;
+  width: 310px;
+  background: var(--panel);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 6px 20px rgba(20, 24, 60, 0.22);
+}
+
+.report h2 {
+  margin: 0;
+  padding: 9px 40px 8px 14px;
+  font: 700 21px/1.1 "Barlow Condensed", sans-serif;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: #fff;
+  background: var(--enamel);
+  border-bottom: 4px solid var(--frame);
+}
+
+.report .about {
+  margin: 10px 14px 4px;
+  font: 500 11px "IBM Plex Mono", monospace;
+  color: var(--muted);
+}
+
+.report fieldset {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 4px 14px 8px;
+  border: 0;
+  font-size: 13.5px;
+}
+
+.report legend {
+  padding: 0 0 4px;
+  font: 600 13px "Barlow Condensed", sans-serif;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.report label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.report input[type="radio"] {
+  accent-color: var(--enamel);
+}
+
+.report textarea {
+  display: block;
+  width: calc(100% - 28px);
+  margin: 0 14px;
+  padding: 7px 9px;
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  background: #fff;
+  font: 13px/1.35 "Barlow", sans-serif;
+  color: var(--ink);
+  resize: vertical;
+}
+
+.report .hp {
+  position: absolute;
+  left: -9999px;
+}
+
+.report .row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px 12px;
+}
+
+.report .status {
+  margin: 0;
+  font: 500 11px "IBM Plex Mono", monospace;
+  color: var(--muted);
+}
+
+.report .send {
+  padding: 6px 18px;
+  border: 0;
+  border-radius: 99px;
+  background: var(--enamel);
+  font: 600 14px "Barlow Condensed", sans-serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #fff;
+  cursor: pointer;
+}
+
+.report .send:disabled {
+  opacity: 0.5;
+  cursor: default;
 }

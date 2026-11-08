@@ -120,6 +120,8 @@ export interface World {
   /** Park and cemetery outlines in metres, for picnics. */
   greens: { kind: string; ring: Float64Array }[];
   project(lon: number, lat: number): [number, number];
+  /** The inverse: world metres back to [lon, lat]. */
+  unproject(x: number, y: number): [number, number];
 }
 
 export type RoadColor = "road" | "path" | "rail";
@@ -436,7 +438,7 @@ async function fetchJson(url: string, expected: number, onProgress?: (f: number)
 }
 
 /** What the map needs before its data arrives: where things are, and its outline. */
-export type MapFrame = Pick<World, "project" | "boundary">;
+export type MapFrame = Pick<World, "project" | "unproject" | "boundary">;
 
 /** public/data/paris-meta.json, from fetch-osm.mjs: a few kB instead of the city's 13 MB. */
 export async function loadFrame(url: string): Promise<MapFrame> {
@@ -445,6 +447,7 @@ export async function loadFrame(url: string): Promise<MapFrame> {
   const kx = (Math.PI / 180) * R * Math.cos((raw.origin.lat * Math.PI) / 180), ky = (Math.PI / 180) * R;
   return {
     project: (lon, lat) => [(lon - raw.origin.lon) * kx, -(lat - raw.origin.lat) * ky],
+    unproject: (x, y) => [raw.origin.lon + x / kx, raw.origin.lat - y / ky],
     boundary: Float64Array.from(raw.boundary, (v) => v / raw.scale),
   };
 }
@@ -464,6 +467,7 @@ export async function loadWorld(url: string, bdtopoUrl?: string, onProgress?: (f
   const kx = (Math.PI / 180) * R * Math.cos((lat0 * Math.PI) / 180);
   const ky = (Math.PI / 180) * R;
   const project = (lon: number, lat: number): [number, number] => [(lon - lon0) * kx, -(lat - lat0) * ky];
+  const unproject = (x: number, y: number): [number, number] => [lon0 + x / kx, lat0 - y / ky];
 
   const pace = pacer();
   const allRings = raw.buildings.map((b) => b.r.map((r) => Float64Array.from(r, (v) => v / k)));
@@ -662,6 +666,7 @@ export async function loadWorld(url: string, bdtopoUrl?: string, onProgress?: (f
     bounds: raw.bounds, boundary, onMap, onWater, buildings, trees, roads, streets, junctions, metro, walks, walkJunctions, rails, greens,
     ground: { slab, parks, pitches, cemeteries, water, bridges, treeShadows, shadows },
     project,
+    unproject,
   };
 }
 

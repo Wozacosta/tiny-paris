@@ -36,7 +36,8 @@
           by <a href="https://woza.ink" target="_blank" rel="noopener">woza.ink</a> ·
           <a href="https://x.com/wozacos" target="_blank" rel="noopener">X</a> ·
           <a href="https://bsky.app/profile/woza.ink" target="_blank" rel="noopener">Bluesky</a> ·
-          <a href="https://github.com/Wozacosta" target="_blank" rel="noopener">GitHub</a>
+          <a href="https://github.com/Wozacosta" target="_blank" rel="noopener">GitHub</a> ·
+          <button class="linkish" id="report-view" type="button">Report a problem</button>
         </p>
       </div>
     </header>
@@ -70,7 +71,27 @@
       <button class="close" id="info-close" aria-label="Close">×</button>
       <h2 id="info-title"></h2>
       <dl id="info-body"></dl>
+      <button class="report-link" id="info-report" type="button">Something wrong? Report it</button>
     </aside>
+
+    <form class="report" id="report" hidden>
+      <button class="close" id="report-close" type="button" aria-label="Close">×</button>
+      <h2>Report a problem</h2>
+      <p class="about" id="report-about"></p>
+      <fieldset>
+        <legend>What's wrong?</legend>
+        <label><input type="radio" name="kind" value="looks-wrong" checked /> It doesn't look like this</label>
+        <label><input type="radio" name="kind" value="wrong-place" /> It's in the wrong place</label>
+        <label><input type="radio" name="kind" value="missing" /> Something is missing</label>
+        <label><input type="radio" name="kind" value="other" /> Something else</label>
+      </fieldset>
+      <textarea name="note" rows="3" maxlength="1000" placeholder="Tell me more (optional): what it really looks like, a link…"></textarea>
+      <input class="hp" name="website" tabindex="-1" autocomplete="off" aria-hidden="true" />
+      <div class="row">
+        <p class="status" id="report-status" role="status"></p>
+        <button class="send" type="submit">Send</button>
+      </div>
+    </form>
 
     <div class="streets" id="streets" role="status" aria-live="polite" hidden>
       <span class="spin" aria-hidden="true"></span><span class="t">Loading streets &amp; traffic</span><span class="pct"></span>
