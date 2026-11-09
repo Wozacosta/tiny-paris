@@ -385,13 +385,17 @@ function groundTransform(ctx: CanvasRenderingContext2D, r: Rotation, z: number, 
   ctx.setTransform((a - c) * z, ((a + c) / 2) * z, (b - d) * z, ((b + d) / 2) * z, ox, oy - h * Z * z);
 }
 
-export function drawGround(ctx: CanvasRenderingContext2D, world: World, view: RotView, cam: Camera, theme: Theme, res: number, photo?: Photo) {
+/**
+ * Just the map's slab: its plain top and the thickness along its edges. Under
+ * the painting that's all of the ground that shows (the edges, and the hairline
+ * gaps between painted tiles). Leaves the ground transform set.
+ */
+export function drawSlab(ctx: CanvasRenderingContext2D, world: World, view: RotView, cam: Camera, theme: Theme) {
   const { width: cw, height: ch } = ctx.canvas;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, cw, ch);
   const z = cam.zoom;
   const { ox, oy } = viewRect(ctx, cam);
-  const cssZoom = z / res;
 
   ctx.setTransform(z, 0, 0, z, ox, oy);
   ctx.fillStyle = theme.slabLeft;
@@ -401,11 +405,18 @@ export function drawGround(ctx: CanvasRenderingContext2D, world: World, view: Ro
 
   // The ground plane is world metres straight through an affine transform.
   groundTransform(ctx, view.rotation, z, ox, oy);
-  const g = world.ground;
   ctx.fillStyle = theme.ground;
-  ctx.fill(g.slab);
+  ctx.fill(world.slab);
+}
+
+export function drawGround(ctx: CanvasRenderingContext2D, world: World, view: RotView, cam: Camera, theme: Theme, res: number, photo?: Photo) {
+  drawSlab(ctx, world, view, cam, theme);
+  const z = cam.zoom;
+  const { ox, oy } = viewRect(ctx, cam);
+  const cssZoom = z / res;
+  const g = world.ground;
   ctx.save();
-  ctx.clip(g.slab);
+  ctx.clip(world.slab);
   ctx.fillStyle = theme.park;
   ctx.fill(g.parks);
   ctx.fillStyle = theme.pitch;
@@ -670,14 +681,39 @@ export function drawHighlight(
   ctx.globalCompositeOperation = "source-over";
 }
 
+const PICK_CELL = 40;
+/** Per view, its buildings' item indices by the iso-space cells their boxes cover. */
+const pickGrids = new WeakMap<RotView, Map<string, number[]>>();
+
+function pickGrid(view: RotView) {
+  let grid = pickGrids.get(view);
+  if (grid) return grid;
+  grid = new Map();
+  view.items.forEach((it, k) => {
+    if (it.kind !== "b") return;
+    const [x0, y0, x1, y1] = it.bbox;
+    for (let gx = Math.floor(x0 / PICK_CELL); gx <= Math.floor(x1 / PICK_CELL); gx++) {
+      for (let gy = Math.floor(y0 / PICK_CELL); gy <= Math.floor(y1 / PICK_CELL); gy++) {
+        const key = `${gx},${gy}`;
+        const list = grid!.get(key);
+        if (list) list.push(k);
+        else grid!.set(key, [k]);
+      }
+    }
+  });
+  pickGrids.set(view, grid);
+  return grid;
+}
+
 /** Topmost building under an iso-space point, or null. */
 export function pick(ctx: CanvasRenderingContext2D, view: RotView, ix: number, iy: number): number | null {
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   try {
-    for (let k = view.items.length - 1; k >= 0; k--) {
-      const it = view.items[k];
-      if (it.kind !== "b") continue;
+    // Only the buildings whose boxes cover this cell, front to back (indices ascend in drawing order).
+    const near = pickGrid(view).get(`${Math.floor(ix / PICK_CELL)},${Math.floor(iy / PICK_CELL)}`) ?? [];
+    for (let n = near.length - 1; n >= 0; n--) {
+      const it = view.items[near[n]] as BuildingItem;
       const [x0, y0, x1, y1] = it.bbox;
       if (ix < x0 || ix > x1 || iy < y0 || iy > y1) continue;
       if (

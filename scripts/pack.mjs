@@ -1,16 +1,21 @@
 // Packs public/data/paris.json into public/data/paris.bin for the app: every
 // coordinate goes into one stream of 32-bit integers, each line or ring as its
 // length then its points, the first absolute and the rest as steps from the
-// one before (small numbers, which compress well). The rest (heights, road
-// kinds, building tags) rides in a JSON header. Parsing 39 MB of JSON into
-// millions of small arrays was what made phones run out of memory.
+// one before (small numbers, which compress well). The rest rides in a JSON
+// header: heights, road kinds, building tags, and what is worked out here once
+// instead of on every visitor's phone (the BD TOPO survey row matched to each
+// building, the roads that run through buildings).
 //   node scripts/pack.mjs   (fetch-osm.mjs runs it after writing paris.json)
 //
 // Layout: "TPB1", header length (u32), header JSON, padding to 4 bytes, ints.
 // src/model.ts (unpack) reads it back in the same order as written here.
 
+import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { matchBdTopo, throughBuildings } from "../src/model.ts";
+
+const BDTOPO = "public/data/paris-bdtopo.json";
 
 export async function pack(world, file = "public/data/paris.bin") {
   const ints = [];
@@ -33,12 +38,22 @@ export async function pack(world, file = "public/data/paris.bin") {
   for (const r of world.roads) { ints.push(roadKinds.indexOf(r.k), roadWidths.indexOf(r.w)); line(r.p); }
   line(world.trees.flat());
 
+  // Worked out here once rather than on every visitor's phone.
+  const k = world.scale;
+  const footprints = world.buildings.map((b) => b.r.map((r) => Float64Array.from(r, (v) => v / k)));
+  // The app never reads a row's position, so it goes as 0 and compresses away.
+  const bd = (existsSync(BDTOPO) ? matchBdTopo(JSON.parse(await readFile(BDTOPO, "utf8")).rows, footprints, k) : world.buildings.map(() => null))
+    .map((r) => r && [0, 0, ...r.slice(2)]);
+  const flags = throughBuildings(footprints.map((r) => r[0]), world.roads, k);
+  const through = [];
+  flags.forEach((f, i) => f && through.push(i));
+
   const header = Buffer.from(JSON.stringify({
     bbox: world.bbox, origin: world.origin, bounds: world.bounds, boundary: world.boundary, scale: world.scale, metro: world.metro,
     counts: { buildings: world.buildings.length, water: world.water.length, parks: world.parks.length, bridges: world.bridges.length, roads: world.roads.length },
     heights: world.buildings.map((b) => b.h ?? null),
     info: world.buildings.map((b) => b.i ?? null),
-    roadKinds, roadWidths, parkKinds,
+    roadKinds, roadWidths, parkKinds, bd, through,
   }));
   const pad = (4 - ((8 + header.length) % 4)) % 4;
   const head = Buffer.alloc(8 + header.length + pad, 0x20);

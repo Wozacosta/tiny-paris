@@ -164,12 +164,32 @@ export class Traffic {
   }
 
   /** Lines a station up with the nearest street, along the pavement. */
+  /** Streets by the 300 m cell of their first point, for placeStation. */
+  private streetCells: Map<string, number[]> | null = null;
+
   private placeStation(x: number, y: number, capacity: number, seed: number): Station {
+    const C = 300;
+    if (!this.streetCells) {
+      this.streetCells = new Map();
+      this.world.streets.forEach((l, i) => {
+        if (l.kind === "cycleway") return;
+        const key = `${Math.floor(l.pts[0] / C)},${Math.floor(l.pts[1] / C)}`;
+        const list = this.streetCells!.get(key);
+        if (list) list.push(i);
+        else this.streetCells!.set(key, [i]);
+      });
+    }
+    // Lanes starting within 300 m (lanes are short in Paris), in their original
+    // order so ties resolve as before.
+    const near: number[] = [];
+    for (let cx = Math.floor(x / C) - 1; cx <= Math.floor(x / C) + 1; cx++) {
+      for (let cy = Math.floor(y / C) - 1; cy <= Math.floor(y / C) + 1; cy++) near.push(...(this.streetCells.get(`${cx},${cy}`) ?? []));
+    }
+    near.sort((a, b) => a - b);
     let best = Infinity, tx = 1, ty = 0, px = x, py = y;
-    for (const l of this.world.streets) {
-      if (l.kind === "cycleway") continue;
+    for (const i of near) {
+      const l = this.world.streets[i];
       const p = l.pts;
-      // Cheap reject on the lane's first point; lanes are short in Paris.
       if (Math.abs(p[0] - x) > 300 || Math.abs(p[1] - y) > 300) continue;
       for (let i = 0; i + 3 < p.length; i += 2) {
         const ax = p[i], ay = p[i + 1], bx = p[i + 2], by = p[i + 3];

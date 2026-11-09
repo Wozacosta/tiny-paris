@@ -39,6 +39,10 @@ interface Raw {
   /** Flat [x, y, ...]. */
   trees: Flat;
   metro?: { line: string; p: number[]; z: number[] }[];
+  /** Per building, the BD TOPO survey row matched to it, found by scripts/pack.mjs. */
+  bd: (BdRow | null)[];
+  /** Per road, 1 if it runs through a building (see throughBuildings). */
+  through: Uint8Array;
 }
 
 /** A polyline vehicles can follow, with cumulative lengths for sampling. */
@@ -106,8 +110,11 @@ export interface World {
   onWater(x: number, y: number): boolean;
   buildings: Building[];
   trees: Float64Array;
+  /** The map's outline as a path, for its plain ground. */
+  slab: Path2D;
+  /** Built the first time they're drawn (see groundPaths). */
   ground: {
-    slab: Path2D; parks: Path2D; pitches: Path2D; cemeteries: Path2D; water: Path2D; bridges: Path2D;
+    parks: Path2D; pitches: Path2D; cemeteries: Path2D; water: Path2D; bridges: Path2D;
     treeShadows: Path2D;
     /** Building shadows per 500 m cell (one huge Path2D gets very slow to build). */
     shadows: { x: number; y: number; path: Path2D }[];
@@ -173,7 +180,7 @@ export const TRUCK_ROADS = new Set(["residential", "living_street", "unclassifie
 const WALKS = new Set(["footway", "pedestrian", "path", "living_street"]);
 const MAJOR = new Set(["motorway", "trunk", "primary", "secondary", "tertiary"]);
 
-function pointInRing(x: number, y: number, r: Float64Array) {
+function pointInRing(x: number, y: number, r: ArrayLike<number>) {
   let inside = false;
   for (let i = 0, j = r.length - 2; i < r.length; j = i, i += 2) {
     const xi = r[i], yi = r[i + 1], xj = r[j], yj = r[j + 1];
@@ -248,7 +255,7 @@ export type Style = "stone" | "brick" | "modern" | "recent";
 export type RoofKind = "zinc" | "slate" | "tile" | "flat" | "glass";
 
 /** One BD TOPO building: centroid (decimetres), height, floors, materials, year. */
-type BdRow = [number, number, number, number, string, string, number];
+export type BdRow = [number, number, number, number, string, string, number];
 
 // BD TOPO material codes are two digits, one material per digit.
 // Walls: 1 stone, 2 millstone, 3 concrete, 4 brick, 5 breeze block, 6 wood, 9 other.
@@ -320,7 +327,8 @@ function pacer() {
   };
 }
 
-async function matchBdTopo(rows: BdRow[], rings: Float64Array[][], k: number, pace: () => Promise<void>): Promise<(BdRow | undefined)[]> {
+/** The tallest BD TOPO survey point inside each building's outline. Run by scripts/pack.mjs. */
+export function matchBdTopo(rows: BdRow[], rings: ArrayLike<number>[][], k: number): (BdRow | null)[] {
   const CELL = 40;
   const grid = new Map<string, BdRow[]>();
   for (const r of rows) {
@@ -329,16 +337,15 @@ async function matchBdTopo(rows: BdRow[], rings: Float64Array[][], k: number, pa
     if (!list) grid.set(key, (list = []));
     list.push(r);
   }
-  const out: (BdRow | undefined)[] = [];
+  const out: (BdRow | null)[] = [];
   for (const rs of rings) {
-    await pace();
     const o = rs[0];
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (let i = 0; i < o.length; i += 2) {
       x0 = Math.min(x0, o[i]); x1 = Math.max(x1, o[i]);
       y0 = Math.min(y0, o[i + 1]); y1 = Math.max(y1, o[i + 1]);
     }
-    let best: BdRow | undefined;
+    let best: BdRow | null = null;
     for (let gx = Math.floor(x0 / CELL); gx <= Math.floor(x1 / CELL); gx++) {
       for (let gy = Math.floor(y0 / CELL); gy <= Math.floor(y1 / CELL); gy++) {
         for (const r of grid.get(`${gx},${gy}`) ?? []) {
@@ -353,13 +360,53 @@ async function matchBdTopo(rows: BdRow[], rings: Float64Array[][], k: number, pa
   return out;
 }
 
-function inRing(x: number, y: number, r: Float64Array) {
+function inRing(x: number, y: number, r: ArrayLike<number>) {
   let inside = false;
   for (let i = 0, j = r.length - 2; i < r.length; j = i, i += 2) {
     const xi = r[i], yi = r[i + 1], xj = r[j], yj = r[j + 1];
     if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
   }
   return inside;
+}
+
+/**
+ * Footpaths and service roads mapped through passages and courtyards would put
+ * people and cars on top of the painted roofs: 1 for each road whose quarter,
+ * middle or three-quarter point is inside a building. Run by scripts/pack.mjs.
+ */
+export function throughBuildings(outer: ArrayLike<number>[], roads: { k: string; p: ArrayLike<number> }[], k: number): Uint8Array {
+  const CELL = 50;
+  const cells = new Map<string, number[]>();
+  for (let i = 0; i < outer.length; i++) {
+    const r0 = outer[i];
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (let j = 0; j < r0.length; j += 2) {
+      x0 = Math.min(x0, r0[j]); x1 = Math.max(x1, r0[j]); y0 = Math.min(y0, r0[j + 1]); y1 = Math.max(y1, r0[j + 1]);
+    }
+    for (let gx = Math.floor(x0 / CELL); gx <= Math.floor(x1 / CELL); gx++) {
+      for (let gy = Math.floor(y0 / CELL); gy <= Math.floor(y1 / CELL); gy++) {
+        const key = `${gx},${gy}`;
+        const list = cells.get(key);
+        if (list) list.push(i);
+        else cells.set(key, [i]);
+      }
+    }
+  }
+  const indoors = (x: number, y: number) =>
+    (cells.get(`${Math.floor(x / CELL)},${Math.floor(y / CELL)}`) ?? []).some((i) => pointInRing(x, y, outer[i]));
+  const out = new Uint8Array(roads.length);
+  roads.forEach((r, ri) => {
+    if (r.k !== "service" && !WALKS.has(r.k)) return;
+    const flat = Float64Array.from(r.p, (v) => v / k);
+    const lane = makeLane(flat, 0, false, "");
+    out[ri] = Number([0.25, 0.5, 0.75].some((f) => {
+      let i = 1;
+      while (i < lane.cum.length - 1 && lane.cum[i] < lane.len * f) i++;
+      const t = (lane.len * f - lane.cum[i - 1]) / (lane.cum[i] - lane.cum[i - 1] || 1);
+      return indoors(flat[i * 2 - 2] + (flat[i * 2] - flat[i * 2 - 2]) * t, flat[i * 2 - 1] + (flat[i * 2 + 1] - flat[i * 2 - 1]) * t);
+    }));
+  });
+  return out;
 }
 
 /** Cheap deterministic noise from a point, in [0, 1). */
@@ -448,7 +495,7 @@ function unpack(buf: ArrayBuffer): Raw {
   if (new TextDecoder().decode(new Uint8Array(buf, 0, 4)) !== "TPB1") throw new Error("not a Tiny Paris data file");
   const len = head.getUint32(4, true);
   const h = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 8, len)));
-  const ints = new Int32Array(buf, 8 + len);
+  let ints = new Int32Array(buf, 8 + len);
   let at = 0;
   // Each line is its length, then its first point and the steps after it:
   // summed back in place, and handed out as a view rather than a copy.
@@ -462,6 +509,10 @@ function unpack(buf: ArrayBuffer): Raw {
   const times = <T>(n: number, f: (i: number) => T) => Array.from({ length: n }, (_, i) => f(i));
   const c = h.counts;
   const buildings: RawBuilding[] = times(c.buildings, (i) => ({ r: rings(), h: h.heights[i] ?? undefined, i: h.info[i] ?? undefined }));
+  // The rest gets its own, smaller buffer: the map's ground may be drawn later
+  // from it, and that shouldn't keep the buildings' 13 MB alive.
+  ints = ints.slice(at);
+  at = 0;
   const water = times(c.water, rings);
   const parks = times(c.parks, () => ({ k: h.parkKinds[ints[at++]] as string, r: rings() }));
   const bridges = times(c.bridges, rings);
@@ -470,7 +521,12 @@ function unpack(buf: ArrayBuffer): Raw {
     return { k, w, p: line() };
   });
   const trees = line();
-  return { bbox: h.bbox, origin: h.origin, bounds: h.bounds, boundary: h.boundary, scale: h.scale, metro: h.metro, buildings, water, parks, bridges, roads, trees };
+  const through = new Uint8Array(c.roads);
+  for (const i of h.through as number[]) through[i] = 1;
+  return {
+    bbox: h.bbox, origin: h.origin, bounds: h.bounds, boundary: h.boundary, scale: h.scale, metro: h.metro,
+    buildings, water, parks, bridges, roads, trees, bd: h.bd, through,
+  };
 }
 
 /** What the map needs before its data arrives: where things are, and its outline. */
@@ -488,11 +544,61 @@ export async function loadFrame(url: string): Promise<MapFrame> {
   };
 }
 
-export async function loadWorld(url: string, bdtopoUrl?: string, onProgress?: (f: number) => void): Promise<World> {
-  const [raw, bdRaw]: [Raw, { rows: BdRow[] } | null] = await Promise.all([
-    fetchBytes(url, 25.6e6, onProgress).then(unpack),
-    bdtopoUrl ? fetch(bdtopoUrl).then((r) => (r.ok && r.headers.get("content-type")?.includes("json") ? r.json() : null)) : null,
-  ]);
+type GroundSource = Pick<Raw, "parks" | "water" | "bridges" | "roads">;
+
+/**
+ * The flat map under the buildings, built the first time it's drawn. Under the
+ * painting it never is, and these paths took a quarter of a phone's start-up.
+ * Top-level so the closure holds only its arguments, not all of loadWorld's.
+ */
+function groundPaths(src: GroundSource, buildings: Building[], trees: Float64Array, k: number) {
+  let built: Pick<World, "ground" | "roads"> | null = null;
+  return () => {
+    if (built) return built;
+    const parks = new Path2D();
+    const pitches = new Path2D();
+    const cemeteries = new Path2D();
+    for (const p of src.parks) ringsToPath(p.k === "pitch" ? pitches : p.k === "cemetery" ? cemeteries : parks, p.r, k);
+    const water = new Path2D();
+    for (const w of src.water) ringsToPath(water, w, k);
+    const bridges = new Path2D();
+    for (const b of src.bridges) ringsToPath(bridges, b, k);
+
+    // One stroked path per width so the whole network is a handful of calls.
+    const byWidth = new Map<string, { width: number; color: RoadColor; path: Path2D }>();
+    for (const r of src.roads) {
+      const color: RoadColor = r.k === "rail" ? "rail" : ["footway", "path", "cycleway", "pedestrian"].includes(r.k) ? "path" : "road";
+      const key = `${r.w}:${color}`;
+      let g = byWidth.get(key);
+      if (!g) byWidth.set(key, (g = { width: r.w, color, path: new Path2D() }));
+      g.path.moveTo(r.p[0] / k, r.p[1] / k);
+      for (let i = 2; i < r.p.length; i += 2) g.path.lineTo(r.p[i] / k, r.p[i + 1] / k);
+    }
+    // Rails go on top of the street network, wide roads under narrow ones.
+    const roads = [...byWidth.values()].sort((a, b) => Number(a.color === "rail") - Number(b.color === "rail") || b.width - a.width);
+
+    const SHADOW_CELL = 500;
+    const shadowCells = new Map<string, { x: number; y: number; path: Path2D }>();
+    for (const b of buildings) {
+      const x = Math.floor(b.cx / SHADOW_CELL), y = Math.floor(b.cy / SHADOW_CELL), key = `${x},${y}`;
+      let cell = shadowCells.get(key);
+      if (!cell) shadowCells.set(key, (cell = { x: x * SHADOW_CELL, y: y * SHADOW_CELL, path: new Path2D() }));
+      addShadow(cell.path, b.rings[0], SUN[0] * b.h, SUN[1] * b.h);
+    }
+    const shadows = [...shadowCells.values()];
+
+    const treeShadows = new Path2D();
+    for (let i = 0; i < trees.length; i += 2) {
+      treeShadows.moveTo(trees[i] + 4.5, trees[i + 1] + 1);
+      treeShadows.ellipse(trees[i] + 1, trees[i + 1] + 1, 3.5, 3.5, 0, 0, Math.PI * 2);
+    }
+    built = { ground: { parks, pitches, cemeteries, water, bridges, treeShadows, shadows }, roads };
+    return built;
+  };
+}
+
+export async function loadWorld(url: string, onProgress?: (f: number) => void): Promise<World> {
+  const raw = unpack(await fetchBytes(url, 25.6e6, onProgress));
   // Let the page show "building" before the long synchronous work below.
   onProgress?.(1);
   await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
@@ -519,14 +625,13 @@ export async function loadWorld(url: string, bdtopoUrl?: string, onProgress?: (f
       return ring;
     }),
   );
-  const bdMatch = bdRaw ? await matchBdTopo(bdRaw.rows, allRings, k, pace) : [];
 
   const buildings: Building[] = [];
   for (let bi = 0; bi < raw.buildings.length; bi++) {
     await pace();
     let b = raw.buildings[bi];
     const rings = allRings[bi];
-    const bd = bdMatch[bi];
+    const bd = raw.bd[bi] ?? undefined;
     // BD TOPO surveyed heights beat our guesses; OSM-tagged heights win over both.
     // For a church BD TOPO gives the spire's height, far above the nave the
     // footprint mostly is, so cap it there.
@@ -562,8 +667,6 @@ export async function loadWorld(url: string, bdtopoUrl?: string, onProgress?: (f
   }
 
   const boundary = Float64Array.from(raw.boundary, (v) => v / k);
-  const slab = new Path2D();
-  ringsToPath(slab, [raw.boundary], k);
   // Distance-to-edge test on a coarse grid, so per-frame checks stay cheap.
   const [bx0, by0, bx1, by1] = raw.bounds;
   const GRID = 20, gw = Math.ceil((bx1 - bx0) / GRID), gh = Math.ceil((by1 - by0) / GRID);
@@ -590,78 +693,7 @@ export async function loadWorld(url: string, bdtopoUrl?: string, onProgress?: (f
     return !margin || (cell(x - margin, y) && cell(x + margin, y) && cell(x, y - margin) && cell(x, y + margin));
   };
 
-  const parks = new Path2D();
-  const pitches = new Path2D();
-  const cemeteries = new Path2D();
-  for (const p of raw.parks) {
-    await pace();
-    ringsToPath(p.k === "pitch" ? pitches : p.k === "cemetery" ? cemeteries : parks, p.r, k);
-  }
-  const water = new Path2D();
-  for (const w of raw.water) ringsToPath(water, w, k);
   const onWater = waterGrid(raw.water, k, raw.bounds);
-  const bridges = new Path2D();
-  for (const b of raw.bridges) ringsToPath(bridges, b, k);
-
-  // One stroked path per width so the whole network is a handful of calls.
-  const byWidth = new Map<string, { width: number; color: RoadColor; path: Path2D }>();
-  for (const r of raw.roads) {
-    await pace();
-    const color: RoadColor = r.k === "rail" ? "rail" : ["footway", "path", "cycleway", "pedestrian"].includes(r.k) ? "path" : "road";
-    const key = `${r.w}:${color}`;
-    let g = byWidth.get(key);
-    if (!g) byWidth.set(key, (g = { width: r.w, color, path: new Path2D() }));
-    g.path.moveTo(r.p[0] / k, r.p[1] / k);
-    for (let i = 2; i < r.p.length; i += 2) g.path.lineTo(r.p[i] / k, r.p[i + 1] / k);
-  }
-  // Rails go on top of the street network, wide roads under narrow ones.
-  const roads = [...byWidth.values()].sort((a, b) => Number(a.color === "rail") - Number(b.color === "rail") || b.width - a.width);
-
-  const SHADOW_CELL = 500;
-  const shadowCells = new Map<string, { x: number; y: number; path: Path2D }>();
-  for (const b of buildings) {
-    await pace();
-    const x = Math.floor(b.cx / SHADOW_CELL), y = Math.floor(b.cy / SHADOW_CELL), key = `${x},${y}`;
-    let cell = shadowCells.get(key);
-    if (!cell) shadowCells.set(key, (cell = { x: x * SHADOW_CELL, y: y * SHADOW_CELL, path: new Path2D() }));
-    addShadow(cell.path, b.rings[0], SUN[0] * b.h, SUN[1] * b.h);
-  }
-  const shadows = [...shadowCells.values()];
-
-  // Footpaths and service roads mapped through passages and courtyards would
-  // put people and cars on top of the painted roofs: drop any whose middle is
-  // inside a building.
-  const CELL = 50;
-  const cells = new Map<string, number[]>();
-  for (let i = 0; i < buildings.length; i++) {
-    await pace();
-    const b = buildings[i];
-    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    const r0 = b.rings[0];
-    for (let j = 0; j < r0.length; j += 2) {
-      x0 = Math.min(x0, r0[j]); x1 = Math.max(x1, r0[j]); y0 = Math.min(y0, r0[j + 1]); y1 = Math.max(y1, r0[j + 1]);
-    }
-    for (let gx = Math.floor(x0 / CELL); gx <= Math.floor(x1 / CELL); gx++) {
-      for (let gy = Math.floor(y0 / CELL); gy <= Math.floor(y1 / CELL); gy++) {
-        const key = `${gx},${gy}`;
-        const list = cells.get(key);
-        if (list) list.push(i);
-        else cells.set(key, [i]);
-      }
-    }
-  }
-  const indoors = (x: number, y: number) =>
-    (cells.get(`${Math.floor(x / CELL)},${Math.floor(y / CELL)}`) ?? []).some((i) => pointInRing(x, y, buildings[i].rings[0]));
-  const throughBuilding = (flat: Float64Array) => {
-    const lane = makeLane(flat, 0, false, "");
-    return [0.25, 0.5, 0.75].some((f) => {
-      let i = 1;
-      while (i < lane.cum.length - 1 && lane.cum[i] < lane.len * f) i++;
-      const t = (lane.len * f - lane.cum[i - 1]) / (lane.cum[i] - lane.cum[i - 1] || 1);
-      return indoors(flat[i * 2 - 2] + (flat[i * 2] - flat[i * 2 - 2]) * t, flat[i * 2 - 1] + (flat[i * 2 + 1] - flat[i * 2 - 1]) * t);
-    });
-  };
-
   // No cars in cemeteries: their alleys are mapped as roads.
   const graveyards = raw.parks
     .filter((p) => p.k === "cemetery")
@@ -682,11 +714,12 @@ export async function loadWorld(url: string, bdtopoUrl?: string, onProgress?: (f
 
   const streets: Lane[] = [];
   const junctions = new Map<string, number[]>();
-  for (const r of raw.roads) {
+  for (let ri = 0; ri < raw.roads.length; ri++) {
+    const r = raw.roads[ri];
     if (!STREETS.has(r.k)) continue;
     await pace();
     const flat = Float64Array.from(r.p, (v) => v / k);
-    if (r.k === "service" && throughBuilding(flat)) continue;
+    if (r.k === "service" && raw.through[ri]) continue;
     if (inGraveyard(flat)) continue;
     const lane = makeLane(flat, r.w / 2, MAJOR.has(r.k), r.k);
     if (lane.len < 1) continue;
@@ -696,12 +729,13 @@ export async function loadWorld(url: string, bdtopoUrl?: string, onProgress?: (f
   const walks: Lane[] = [];
   const walkJunctions = new Map<string, number[]>();
   const rails: Lane[] = [];
-  for (const r of raw.roads) {
+  for (let ri = 0; ri < raw.roads.length; ri++) {
+    const r = raw.roads[ri];
     const walk = WALKS.has(r.k);
     if (!walk && r.k !== "rail") continue;
     await pace();
     const flat = Float64Array.from(r.p, (v) => v / k);
-    if (walk && throughBuilding(flat)) continue;
+    if (walk && raw.through[ri]) continue;
     const lane = makeLane(flat, r.w / 2, false, r.k);
     if (lane.len < 2) continue;
     if (!walk) {
@@ -717,21 +751,20 @@ export async function loadWorld(url: string, bdtopoUrl?: string, onProgress?: (f
     return makeLane(flat, 0, true, "metro", smoothHeights(flat, m.z));
   });
 
-  const trees = new Float64Array(raw.trees.length);
-  const treeShadows = new Path2D();
-  for (let i = 0; i < raw.trees.length / 2; i++) {
-    if (i % 2000 === 0) await pace();
-    const x = raw.trees[i * 2], y = raw.trees[i * 2 + 1];
-    trees[i * 2] = x / k;
-    trees[i * 2 + 1] = y / k;
-    treeShadows.moveTo(x / k + 4.5, y / k + 1);
-    treeShadows.ellipse(x / k + 1, y / k + 1, 3.5, 3.5, 0, 0, Math.PI * 2);
-  }
+  const trees = Float64Array.from(raw.trees, (v) => v / k);
+  const slab = new Path2D();
+  ringsToPath(slab, [raw.boundary], k);
+  const paths = groundPaths({ parks: raw.parks, water: raw.water, bridges: raw.bridges, roads: raw.roads }, buildings, trees, k);
 
 
   return {
-    bounds: raw.bounds, boundary, onMap, onWater, buildings, trees, roads, streets, junctions, metro, walks, walkJunctions, rails, greens,
-    ground: { slab, parks, pitches, cemeteries, water, bridges, treeShadows, shadows },
+    bounds: raw.bounds, boundary, slab, onMap, onWater, buildings, trees, streets, junctions, metro, walks, walkJunctions, rails, greens,
+    get ground() {
+      return paths().ground;
+    },
+    get roads() {
+      return paths().roads;
+    },
     project,
     unproject,
   };

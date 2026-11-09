@@ -1,7 +1,7 @@
 import { inject } from "@vercel/analytics";
 import { loadFrame, loadTransit, loadWorld, type Building, type MapFrame, type World } from "./model";
 import { LANDMARKS, TOP, slug, type Landmark } from "./landmarks";
-import { buildRotView, drawGround, drawHighlight, drawStructures, isoToWorld, occluders, pick, worldToIso, type Camera, type Rotation, type RotView } from "./render";
+import { buildRotView, drawGround, drawHighlight, drawSlab, drawStructures, isoToWorld, occluders, pick, worldToIso, type Camera, type Rotation, type RotView } from "./render";
 import { DAY, type Theme } from "./theme";
 import { MOVERS_ZOOM } from "./streetlife";
 import { Traffic } from "./traffic";
@@ -118,7 +118,9 @@ function fullRender() {
   }
   const t = performance.now();
   const c = { ...cam, zoom: cam.zoom * res * snapScale };
-  drawGround(groundCtx, world, view(), c, theme, res * snapScale);
+  // Under the painting only the slab shows: its edges, and between the tiles.
+  if (painted && showPainted) drawSlab(groundCtx, world, view(), c, theme);
+  else drawGround(groundCtx, world, view(), c, theme, res * snapScale);
   if (needsBuildings(cam.zoom)) drawStructures(buildCtx, world, view(), c, theme, res * snapScale);
   else {
     buildCtx.setTransform(1, 0, 0, 1, 0, 0);
@@ -706,7 +708,7 @@ async function main() {
   }
 
   const [w, transit, pois] = await Promise.all([
-    loadWorld("/data/paris.bin", "/data/paris-bdtopo.json", (f) => (painted ? showStreets(f) : showLoading(f))),
+    loadWorld("/data/paris.bin", (f) => (painted ? showStreets(f) : showLoading(f))),
     loadTransit("/data/paris-transit.json"),
     fetch("/data/paris-pois.json").then((r) => (r.ok ? r.json() : { cafes: [] })).catch(() => ({ cafes: [] })),
   ]);
