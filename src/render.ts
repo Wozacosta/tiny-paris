@@ -44,17 +44,54 @@ export function isoToWorld(r: Rotation, sx: number, sy: number): [number, number
 
 type BBox = [number, number, number, number];
 
-interface BuildingItem {
-  kind: "b";
-  idx: number;
-  bbox: BBox;
+interface Shape {
   stoneA: Path2D;
   stoneB: Path2D;
   mansA: Path2D | null;
   mansB: Path2D | null;
   roof: Path2D;
+}
+
+/**
+ * Buildings whose paths exist, least recently drawn first. A path costs Safari
+ * kilobytes, and all 109,000 buildings' worth crashed iPhones; over the painting
+ * only the few in view at middle zoom are ever drawn.
+ */
+const shaped = new Set<BuildingItem>();
+const KEEP_SHAPED = 15000;
+/** Counts drawing passes, so a pass never frees what it has just drawn. */
+let pass = 0;
+
+class BuildingItem {
+  readonly kind = "b";
+  private shape: Shape | null = null;
+  private used = 0;
   /** Windows, shopfronts and balconies, built lazily once zoomed in. */
   detail?: Detail | null;
+
+  constructor(readonly idx: number, readonly bbox: BBox, private b: Building, private r: Rotation) {}
+
+  private paths(): Shape {
+    if (this.shape && this.used === pass) return this.shape;
+    this.used = pass;
+    shaped.delete(this);
+    shaped.add(this);
+    if (this.shape) return this.shape;
+    this.shape = buildShape(this.b, this.r);
+    for (const old of shaped) {
+      if (shaped.size <= KEEP_SHAPED || old.used >= pass) break;
+      old.shape = null;
+      old.detail = undefined;
+      shaped.delete(old);
+    }
+    return this.shape;
+  }
+
+  get stoneA() { return this.paths().stoneA; }
+  get stoneB() { return this.paths().stoneB; }
+  get mansA() { return this.paths().mansA; }
+  get mansB() { return this.paths().mansB; }
+  get roof() { return this.paths().roof; }
 }
 
 interface Detail {
@@ -88,7 +125,24 @@ function signedArea(r: Float64Array) {
   return a / 2;
 }
 
-function buildBuilding(b: Building, idx: number, r: Rotation): BuildingItem {
+/** Screen box of a building: its footprint's corners, from the ground to its roof. */
+function buildingBox(b: Building, r: Rotation): BBox {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const ring of b.rings) {
+    for (let i = 0; i < ring.length; i += 2) {
+      const [sx, sy] = worldToIso(r, ring[i], ring[i + 1]);
+      minX = Math.min(minX, sx); maxX = Math.max(maxX, sx);
+      minY = Math.min(minY, sy - b.h * Z); maxY = Math.max(maxY, sy);
+    }
+  }
+  if (b.domes.length) {
+    const [, sy] = worldToIso(r, b.cx, b.cy, b.top);
+    minY = Math.min(minY, sy - 10);
+  }
+  return [minX, minY, maxX, maxY];
+}
+
+function buildShape(b: Building, r: Rotation): Shape {
   const [a, bb, c, d] = ROT[r];
   const stoneA = new Path2D();
   const stoneB = new Path2D();
@@ -96,7 +150,6 @@ function buildBuilding(b: Building, idx: number, r: Rotation): BuildingItem {
   const mansB = b.mansard ? new Path2D() : null;
   const roof = new Path2D();
   const hs = b.h - b.mansard;
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
 
   const quad = (p: Path2D, x1: number, y1: number, x2: number, y2: number, z1: number, z2: number) => {
     p.moveTo(x1, y1 - z1 * Z);
@@ -123,8 +176,6 @@ function buildBuilding(b: Building, idx: number, r: Rotation): BuildingItem {
       const sx2 = xr[j] - yr[j], sy2 = (xr[j] + yr[j]) / 2;
       if (i === 0) roof.moveTo(sx1, sy1 - b.h * Z);
       else roof.lineTo(sx1, sy1 - b.h * Z);
-      minX = Math.min(minX, sx1); maxX = Math.max(maxX, sx1);
-      minY = Math.min(minY, sy1 - b.h * Z); maxY = Math.max(maxY, sy1);
 
       const dx = xr[j] - xr[i], dy = yr[j] - yr[i];
       const nx = s * dy, ny = -s * dx;
@@ -136,11 +187,7 @@ function buildBuilding(b: Building, idx: number, r: Rotation): BuildingItem {
     roof.closePath();
   });
 
-  if (b.domes.length) {
-    const [, sy] = worldToIso(r, b.cx, b.cy, b.top);
-    minY = Math.min(minY, sy - 10);
-  }
-  return { kind: "b", idx, bbox: [minX, minY, maxX, maxY], stoneA, stoneB, mansA, mansB, roof };
+  return { stoneA, stoneB, mansA, mansB, roof };
 }
 
 export function buildRotView(world: World, r: Rotation): RotView {
@@ -150,7 +197,7 @@ export function buildRotView(world: World, r: Rotation): RotView {
   const pending: Pending[] = [];
   const byBuilding = new Map<number, BuildingItem>();
   world.buildings.forEach((b, i) => {
-    const item = buildBuilding(b, i, r);
+    const item = new BuildingItem(i, buildingBox(b, r), b, r);
     byBuilding.set(i, item);
     pending.push({ depth: depth(b.cx, b.cy), item });
   });
@@ -417,6 +464,7 @@ let near: { view: RotView; rect: BBox; items: RotView["items"] } | null = null;
  * buildings a little bigger than their footprint still hide what's behind.
  */
 export function occluders(ctx: CanvasRenderingContext2D, world: World, view: RotView, rect: BBox, grow: number) {
+  pass++;
   const [vx0, vy0, vx1, vy1] = rect;
   // The items near a recent viewport, so panning doesn't rescan the whole city every frame.
   if (!near || near.view !== view || vx0 < near.rect[0] || vy0 < near.rect[1] || vx1 > near.rect[2] || vy1 > near.rect[3]) {
@@ -456,6 +504,7 @@ export function drawStructures(
   ctx: CanvasRenderingContext2D, world: World, view: RotView, cam: Camera, theme: Theme, res: number, photo?: Photo, roofShape?: RoofShape,
   extras: Extra[] = [],
 ) {
+  pass++;
   extras = [...extras].sort((a, b) => a.depth - b.depth);
   let next = 0;
   const flush = (depth: number) => {
