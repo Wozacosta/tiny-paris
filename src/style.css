@@ -496,18 +496,18 @@ h1 {
 }
 
 .tilt i:nth-child(3n + 1) {
-  height: 34%;
-  --b: 1.5px;
+  height: 26%;
+  --b: 0.6px;
 }
 
 .tilt i:nth-child(3n + 2) {
-  height: 22%;
-  --b: 3px;
+  height: 15%;
+  --b: 1.2px;
 }
 
 .tilt i:nth-child(3n) {
-  height: 12%;
-  --b: 6px;
+  height: 8%;
+  --b: 2.5px;
 }
 
 /* ---- Desktop: the ten best-known landmarks, a picture each --------------- */
