@@ -14,8 +14,11 @@ export interface Info {
   addr?: string;
 }
 
+/** A line or ring, flat [x, y, ...] in world units (×scale): views into one buffer. */
+type Flat = Int32Array;
+
 interface RawBuilding {
-  r: number[][];
+  r: Flat[];
   h?: number;
   i?: Info;
 }
@@ -29,11 +32,12 @@ interface Raw {
   boundary: number[];
   scale: number;
   buildings: RawBuilding[];
-  water: number[][][];
-  parks: { k: string; r: number[][] }[];
-  bridges: number[][][];
-  roads: { w: number; k: string; p: number[] }[];
-  trees: number[][];
+  water: Flat[][];
+  parks: { k: string; r: Flat[] }[];
+  bridges: Flat[][];
+  roads: { w: number; k: string; p: Flat }[];
+  /** Flat [x, y, ...]. */
+  trees: Flat;
   metro?: { line: string; p: number[]; z: number[] }[];
 }
 
@@ -377,7 +381,7 @@ function heightOf(b: RawBuilding, cx: number, cy: number, area: number) {
 }
 
 /** A point-on-water test over the map, from the water polygons filled row by row (even-odd, so islands stay dry). */
-function waterGrid(polys: number[][][], k: number, [bx0, by0, bx1, by1]: [number, number, number, number]) {
+function waterGrid(polys: Flat[][], k: number, [bx0, by0, bx1, by1]: [number, number, number, number]) {
   const G = 4, gw = Math.ceil((bx1 - bx0) / G), gh = Math.ceil((by1 - by0) / G);
   const grid = new Uint8Array(gw * gh);
   const rings = polys.flat().map((r) => Float64Array.from(r, (v) => v / k));
@@ -403,7 +407,7 @@ function waterGrid(polys: number[][][], k: number, [bx0, by0, bx1, by1]: [number
   };
 }
 
-function ringsToPath(path: Path2D, rings: number[][], k: number) {
+function ringsToPath(path: Path2D, rings: ArrayLike<number>[], k: number) {
   for (const r of rings) {
     if (r.length < 6) continue;
     path.moveTo(r[0] / k, r[1] / k);
@@ -416,9 +420,10 @@ function ringsToPath(path: Path2D, rings: number[][], k: number) {
  * Fetches JSON, reporting progress as a fraction. Compressed responses don't
  * say their unpacked size, so `expected` bytes stand in for it.
  */
-async function fetchJson(url: string, expected: number, onProgress?: (f: number) => void) {
+async function fetchBytes(url: string, expected: number, onProgress?: (f: number) => void): Promise<ArrayBuffer> {
   const res = await fetch(url);
-  if (!onProgress || !res.body) return res.json();
+  if (!res.ok) throw new Error(`${url}: ${res.status}`);
+  if (!onProgress || !res.body) return res.arrayBuffer();
   const len = Number(res.headers.get("content-length"));
   const total = len && !res.headers.get("content-encoding") ? len : expected;
   const reader = res.body.getReader();
@@ -434,7 +439,38 @@ async function fetchJson(url: string, expected: number, onProgress?: (f: number)
   const all = new Uint8Array(got);
   let at = 0;
   for (const p of parts) { all.set(p, at); at += p.length; }
-  return JSON.parse(new TextDecoder().decode(all));
+  return all.buffer;
+}
+
+/** Reads public/data/paris.bin, written by scripts/pack.mjs in this same order. */
+function unpack(buf: ArrayBuffer): Raw {
+  const head = new DataView(buf);
+  if (new TextDecoder().decode(new Uint8Array(buf, 0, 4)) !== "TPB1") throw new Error("not a Tiny Paris data file");
+  const len = head.getUint32(4, true);
+  const h = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 8, len)));
+  const ints = new Int32Array(buf, 8 + len);
+  let at = 0;
+  // Each line is its length, then its first point and the steps after it:
+  // summed back in place, and handed out as a view rather than a copy.
+  const line = (): Flat => {
+    const n = ints[at++], start = at;
+    for (let i = start + 2; i < start + n; i++) ints[i] += ints[i - 2];
+    at += n;
+    return ints.subarray(start, start + n);
+  };
+  const rings = () => Array.from({ length: ints[at++] }, line);
+  const times = <T>(n: number, f: (i: number) => T) => Array.from({ length: n }, (_, i) => f(i));
+  const c = h.counts;
+  const buildings: RawBuilding[] = times(c.buildings, (i) => ({ r: rings(), h: h.heights[i] ?? undefined, i: h.info[i] ?? undefined }));
+  const water = times(c.water, rings);
+  const parks = times(c.parks, () => ({ k: h.parkKinds[ints[at++]] as string, r: rings() }));
+  const bridges = times(c.bridges, rings);
+  const roads = times(c.roads, () => {
+    const k: string = h.roadKinds[ints[at++]], w: number = h.roadWidths[ints[at++]];
+    return { k, w, p: line() };
+  });
+  const trees = line();
+  return { bbox: h.bbox, origin: h.origin, bounds: h.bounds, boundary: h.boundary, scale: h.scale, metro: h.metro, buildings, water, parks, bridges, roads, trees };
 }
 
 /** What the map needs before its data arrives: where things are, and its outline. */
@@ -454,7 +490,7 @@ export async function loadFrame(url: string): Promise<MapFrame> {
 
 export async function loadWorld(url: string, bdtopoUrl?: string, onProgress?: (f: number) => void): Promise<World> {
   const [raw, bdRaw]: [Raw, { rows: BdRow[] } | null] = await Promise.all([
-    fetchJson(url, 36.6e6, onProgress),
+    fetchBytes(url, 25.6e6, onProgress).then(unpack),
     bdtopoUrl ? fetch(bdtopoUrl).then((r) => (r.ok && r.headers.get("content-type")?.includes("json") ? r.json() : null)) : null,
   ]);
   // Let the page show "building" before the long synchronous work below.
@@ -470,7 +506,19 @@ export async function loadWorld(url: string, bdtopoUrl?: string, onProgress?: (f
   const unproject = (x: number, y: number): [number, number] => [lon0 + x / kx, lat0 - y / ky];
 
   const pace = pacer();
-  const allRings = raw.buildings.map((b) => b.r.map((r) => Float64Array.from(r, (v) => v / k)));
+  // Every building ring as a view into one array, not 350,000 little ones.
+  let total = 0;
+  for (const b of raw.buildings) for (const r of b.r) total += r.length;
+  const ringData = new Float64Array(total);
+  let at = 0;
+  const allRings = raw.buildings.map((b) =>
+    b.r.map((r) => {
+      const ring = ringData.subarray(at, at + r.length);
+      for (let i = 0; i < r.length; i++) ring[i] = r[i] / k;
+      at += r.length;
+      return ring;
+    }),
+  );
   const bdMatch = bdRaw ? await matchBdTopo(bdRaw.rows, allRings, k, pace) : [];
 
   const buildings: Building[] = [];
@@ -669,11 +717,11 @@ export async function loadWorld(url: string, bdtopoUrl?: string, onProgress?: (f
     return makeLane(flat, 0, true, "metro", smoothHeights(flat, m.z));
   });
 
-  const trees = new Float64Array(raw.trees.length * 2);
+  const trees = new Float64Array(raw.trees.length);
   const treeShadows = new Path2D();
-  for (let i = 0; i < raw.trees.length; i++) {
+  for (let i = 0; i < raw.trees.length / 2; i++) {
     if (i % 2000 === 0) await pace();
-    const [x, y] = raw.trees[i];
+    const x = raw.trees[i * 2], y = raw.trees[i * 2 + 1];
     trees[i * 2] = x / k;
     trees[i * 2 + 1] = y / k;
     treeShadows.moveTo(x / k + 4.5, y / k + 1);

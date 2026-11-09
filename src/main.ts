@@ -706,7 +706,7 @@ async function main() {
   }
 
   const [w, transit, pois] = await Promise.all([
-    loadWorld("/data/paris.json", "/data/paris-bdtopo.json", (f) => (painted ? showStreets(f) : showLoading(f))),
+    loadWorld("/data/paris.bin", "/data/paris-bdtopo.json", (f) => (painted ? showStreets(f) : showLoading(f))),
     loadTransit("/data/paris-transit.json"),
     fetch("/data/paris-pois.json").then((r) => (r.ok ? r.json() : { cafes: [] })).catch(() => ({ cafes: [] })),
   ]);

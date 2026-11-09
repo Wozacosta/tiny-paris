@@ -12,6 +12,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { writeFile, mkdir } from "node:fs/promises";
 import { BBOX, BOUNDARY, ORIGIN, inParis, proj } from "./geo.mjs";
+import { pack } from "./pack.mjs";
 
 const DIR = "paint/osm";
 const PBF = `${DIR}/ile-de-france.osm.pbf`;
@@ -184,6 +185,8 @@ for (const b of out.buildings) {
 await mkdir("public/data", { recursive: true });
 const json = JSON.stringify(out);
 await writeFile(`public/data/paris.json`, json);
+// What the app actually loads: the same data, packed (see pack.mjs).
+await pack(out);
 // The few kB the app needs to show the painting before the rest arrives.
 await writeFile(`public/data/paris-meta.json`, JSON.stringify({ origin: out.origin, scale: out.scale, boundary: out.boundary }));
 console.log(
