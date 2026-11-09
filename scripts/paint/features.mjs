@@ -34,8 +34,10 @@ export function tileFeatures(m) {
     const xs = ring.filter((_, i) => i % 2 === 0), ys = ring.filter((_, i) => i % 2 === 1);
     return { ring, box: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)] };
   });
-  // Métro line 2's viaduct: vertices at least 2 m up.
-  const viaduct = (world.metro ?? []).map((l) => {
+  // Métro viaducts: vertices at least 2 m up. Not line 1, whose only open-air
+  // stretch is its short bridge over the Arsenal basin at Bastille: counted,
+  // it got the boulevard Richard-Lenoir a viaduct that doesn't exist.
+  const viaduct = (world.metro ?? []).filter((l) => l.line !== "1").map((l) => {
     const pts = [];
     for (let i = 0; i < l.p.length; i += 2) pts.push([...toPixel(m, l.p[i], l.p[i + 1]), l.z[i / 2]]);
     return pts;
