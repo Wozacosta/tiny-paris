@@ -26,6 +26,8 @@
   </head>
   <body>
     <canvas id="map" aria-label="Isometric map of Paris"></canvas>
+    <!-- Tilt-shift: the top and bottom of the view go soft, like a photo of a model. -->
+    <div class="tilt" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div>
 
     <div class="loading" id="loading" role="status" aria-live="polite">
       <div class="plaque">
@@ -81,12 +83,10 @@
       </div>
     </section>
 
-    <!-- Desktop: the landmarks as stations along a métro line, with pictures. -->
-    <section class="line" id="line" aria-label="Landmarks">
-      <button class="line-arrow" id="line-prev" type="button" aria-label="Previous landmarks">‹</button>
+    <!-- Desktop: a picture of each of the ten best-known landmarks. -->
+    <nav class="line" id="line" aria-label="Landmarks">
       <ol class="line-track" id="line-track"></ol>
-      <button class="line-arrow" id="line-next" type="button" aria-label="Next landmarks">›</button>
-    </section>
+    </nav>
 
     <aside class="info" id="info" hidden>
       <button class="close" id="info-close" aria-label="Close">×</button>

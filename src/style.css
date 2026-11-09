@@ -472,7 +472,45 @@ h1 {
   background: var(--jade);
 }
 
-/* ---- Desktop: the landmarks as stations along a métro line --------------- */
+/* ---- Tilt-shift: soft top and bottom, sharper bands toward the middle ---- */
+
+.tilt i {
+  position: fixed;
+  left: 0;
+  right: 0;
+  pointer-events: none;
+  -webkit-backdrop-filter: blur(var(--b));
+  backdrop-filter: blur(var(--b));
+}
+
+.tilt i:nth-child(-n + 3) {
+  top: 0;
+  -webkit-mask-image: linear-gradient(#000, transparent);
+  mask-image: linear-gradient(#000, transparent);
+}
+
+.tilt i:nth-child(n + 4) {
+  bottom: 0;
+  -webkit-mask-image: linear-gradient(transparent, #000);
+  mask-image: linear-gradient(transparent, #000);
+}
+
+.tilt i:nth-child(3n + 1) {
+  height: 34%;
+  --b: 1.5px;
+}
+
+.tilt i:nth-child(3n + 2) {
+  height: 22%;
+  --b: 3px;
+}
+
+.tilt i:nth-child(3n) {
+  height: 12%;
+  --b: 6px;
+}
+
+/* ---- Desktop: the ten best-known landmarks, a picture each --------------- */
 
 .line {
   display: none;
@@ -483,27 +521,20 @@ h1 {
     position: fixed;
     left: 282px;
     right: 16px;
-    bottom: 34px;
+    bottom: 32px;
     display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 0 6px;
-    background: var(--panel);
-    border-radius: 10px;
-    box-shadow: 0 6px 20px rgba(20, 24, 60, 0.2);
   }
-
 }
 
 .line-track {
   display: flex;
-  flex: 1;
+  justify-content: safe center;
+  gap: 6px;
   min-width: 0;
-  margin: 0;
-  padding: 10px 0 0;
+  margin: 0 auto;
+  padding: 4px 2px;
   list-style: none;
   overflow-x: auto;
-  scroll-snap-type: x proximity;
   scrollbar-width: none;
 }
 
@@ -512,127 +543,58 @@ h1 {
 }
 
 .line-track li {
-  position: relative;
   flex: none;
-  padding: 0 6px 26px;
-  scroll-snap-align: start;
-}
-
-/* The line runs under the pictures, joining each station to the next. */
-.line-track li::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 11px;
-  height: 5px;
-  background: var(--jade);
-}
-
-.line-track li:first-child::before {
-  left: 50%;
-}
-
-.line-track li:last-child::before {
-  right: 50%;
 }
 
 .line-track button {
   position: relative;
   display: block;
   padding: 0;
-  border-radius: 6px;
-  transition: transform 0.15s;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.55),
+    0 4px 12px rgba(20, 24, 60, 0.28);
+  transition:
+    transform 0.15s,
+    box-shadow 0.15s;
 }
 
 .line-track img {
   display: block;
-  width: 150px;
-  height: 100px;
+  width: 104px;
+  height: 70px;
   object-fit: cover;
-  border: 3px solid #fff;
-  border-radius: 6px;
   background: #e9e4d4;
-  box-shadow: 0 2px 6px rgba(20, 24, 60, 0.25);
 }
 
-/* The station's name on its enamel plate, hanging over the picture. */
-.line-track .plate {
+/* The name, white on a shadow at the foot of the picture. */
+.line-track span {
   position: absolute;
-  left: 8px;
-  right: 8px;
-  bottom: -9px;
-  padding: 3px 6px 4px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 14px 6px 5px;
   overflow: hidden;
-  font: 600 13px/1 "Barlow Condensed", sans-serif;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font: 500 11.5px/1.1 Barlow, sans-serif;
+  color: #fff;
+  text-align: left;
   white-space: nowrap;
   text-overflow: ellipsis;
-  color: #fff;
-  background: var(--enamel);
-  border-radius: 3px;
-  box-shadow:
-    inset 0 0 0 1.5px var(--enamel),
-    inset 0 0 0 2.5px rgba(255, 255, 255, 0.8),
-    0 2px 4px rgba(20, 24, 60, 0.3);
-}
-
-/* The station on the line. */
-.line-track button::after {
-  content: "";
-  position: absolute;
-  left: 50%;
-  bottom: -24px;
-  width: 13px;
-  height: 13px;
-  margin-left: -6.5px;
-  border-radius: 50%;
-  background: #fff;
-  border: 3px solid var(--jade);
-  box-sizing: border-box;
+  background: linear-gradient(transparent, rgba(10, 12, 30, 0.72));
 }
 
 .line-track button:hover {
-  transform: translateY(-3px);
+  transform: translateY(-2px);
+  box-shadow:
+    0 0 0 1px #fff,
+    0 6px 16px rgba(20, 24, 60, 0.32);
 }
 
-.line-track button:hover::after,
-.line-track button[aria-current]::after {
-  background: var(--jade);
-}
-
-/* The picture lifts; its station stays on the line. */
-.line-track button:hover::after {
-  transform: translateY(3px);
-}
-
-.line-track button[aria-current] img {
-  border-color: var(--m1);
-}
-
-/* Round bullets, like the line numbers on the platform signs. */
-.line-arrow {
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  padding-bottom: 3px;
-  font: 600 26px/1 "Barlow Condensed", sans-serif;
-  color: #fff;
-  background: var(--enamel);
-  box-shadow: inset 0 0 0 2px var(--enamel), inset 0 0 0 3.5px rgba(255, 255, 255, 0.8);
-}
-
-.line-arrow:hover {
-  background: var(--enamel-hi);
-}
-
-.line-arrow:disabled {
-  opacity: 0.3;
-  cursor: default;
+.line-track button[aria-current] {
+  box-shadow:
+    0 0 0 2px #fff,
+    0 6px 16px rgba(20, 24, 60, 0.32);
 }
 
 /* ---- Building card: a museum plaque -------------------------------------- */
@@ -1064,11 +1026,11 @@ h1 {
   cursor: default;
 }
 
-/* With the line along the bottom, the cards and the loading pill sit above it. */
+/* With the pictures along the bottom, the cards and the loading pill sit above them. */
 @media (min-width: 900px) and (min-height: 640px) and (hover: hover) {
   .info,
   .report,
   .streets {
-    bottom: 196px;
+    bottom: 122px;
   }
 }

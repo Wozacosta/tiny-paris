@@ -140,3 +140,17 @@ export const slug = (name: string) =>
     .replace(/æ/g, "ae")
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
+
+/** The ten best known, for the desktop strip: a walk from west to east. */
+export const TOP = [
+  "Tour Eiffel",
+  "Arc de Triomphe",
+  "Les Invalides",
+  "Musée d'Orsay",
+  "Louvre",
+  "Opéra Garnier",
+  "Sacré-Cœur",
+  "Centre Pompidou",
+  "Notre-Dame",
+  "Panthéon",
+].map((name) => LANDMARKS.find((l) => l.name === name)!);

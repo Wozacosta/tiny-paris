@@ -1,22 +1,22 @@
 // Cuts a small picture of each landmark out of the painted map, for the
-// desktop strip of landmarks: public/thumbs/<slug>.webp.
+// desktop strip of the ten best-known landmarks: public/thumbs/<slug>.webp.
 //   node scripts/thumbs.mjs
 // Run it again after a stitch that repaints a landmark.
 
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { chromium } from "playwright-core";
-import { LANDMARKS, slug } from "../src/landmarks.ts";
+import { TOP, slug } from "../src/landmarks.ts";
 import { landmarkPixel } from "./paint/landmarks.mjs";
 
 const OUT = "public/thumbs";
-const [W, H] = [360, 240]; // shown at 180 × 120, sharp on 2× screens
+const [W, H] = [210, 140]; // shown at 104 × 70, sharp on 2× screens
 const m = JSON.parse(await readFile("public/painted/manifest.json", "utf8"));
 await mkdir(OUT, { recursive: true });
 
 const browser = await chromium.launch({ channel: "chrome" });
 const page = await browser.newPage();
-for (const l of LANDMARKS) {
+for (const l of TOP) {
   const [px, py] = landmarkPixel(m, l);
   // Closer than the "Go to" view, so the landmark fills the picture; wider
   // for tall things, so their top fits. Whole pixels, so the chunks meet
@@ -52,4 +52,4 @@ for (const l of LANDMARKS) {
   await writeFile(`${OUT}/${slug(l.name)}.webp`, Buffer.from(url.split(",")[1], "base64"));
 }
 await browser.close();
-console.log(`${LANDMARKS.length} thumbnails in ${OUT}`);
+console.log(`${TOP.length} thumbnails in ${OUT}`);

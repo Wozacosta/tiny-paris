@@ -1,6 +1,6 @@
 import { inject } from "@vercel/analytics";
 import { loadFrame, loadTransit, loadWorld, type Building, type MapFrame, type World } from "./model";
-import { LANDMARKS, slug, type Landmark } from "./landmarks";
+import { LANDMARKS, TOP, slug, type Landmark } from "./landmarks";
 import { buildRotView, drawGround, drawHighlight, drawStructures, isoToWorld, occluders, pick, worldToIso, type Camera, type Rotation, type RotView } from "./render";
 import { DAY, type Theme } from "./theme";
 import { MOVERS_ZOOM } from "./streetlife";
@@ -627,36 +627,23 @@ function setupLandmarks() {
   setupLine();
 }
 
-/** The desktop strip: a picture per landmark, each a station on the line. */
+/** The desktop strip: a picture of each of the ten best-known landmarks. */
 function setupLine() {
   const track = $("line-track");
-  for (const l of LANDMARKS) {
+  for (const l of TOP) {
     const li = document.createElement("li");
     const btn = document.createElement("button");
     btn.dataset.name = l.name;
-    btn.title = `${l.name} · ${l.note}`;
     const img = document.createElement("img");
-    Object.assign(img, { src: `/thumbs/${slug(l.name)}.webp`, alt: "", width: 150, height: 100, loading: "lazy", decoding: "async" });
-    const plate = document.createElement("span");
-    plate.className = "plate";
-    plate.textContent = l.name;
-    btn.append(img, plate);
+    Object.assign(img, { src: `/thumbs/${slug(l.name)}.webp`, alt: "", width: 104, height: 70, decoding: "async" });
+    const name = document.createElement("span");
+    name.textContent = l.name;
+    btn.append(img, name);
     btn.onclick = () => goTo(l);
     li.append(btn);
     track.append(li);
   }
-  // Scroll by a page of stations, less one so there's something to hold on to.
-  const page = (dir: number) => track.scrollBy({ left: dir * Math.max(170, track.clientWidth - 170), behavior: "smooth" });
-  $("line-prev").onclick = () => page(-1);
-  $("line-next").onclick = () => page(1);
-  const ends = () => {
-    ($("line-prev") as HTMLButtonElement).disabled = track.scrollLeft < 4;
-    ($("line-next") as HTMLButtonElement).disabled = track.scrollLeft > track.scrollWidth - track.clientWidth - 4;
-  };
-  track.addEventListener("scroll", ends, { passive: true });
-  addEventListener("resize", ends);
-  ends();
-  // A mouse wheel scrolls up and down; along the line is what it means here.
+  // On narrower screens it scrolls; a mouse wheel scrolls it sideways.
   track.addEventListener(
     "wheel",
     (e) => {
