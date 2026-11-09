@@ -230,7 +230,7 @@ function drawLabels() {
     const p = traffic.where(following);
     pin(p.x, p.y, p.z + 5, p.label, placed, theme.label, "#ffd27a");
   }
-  for (const l of LANDMARKS) {
+  for (const l of showNames ? LANDMARKS : []) {
     const [x, y] = frame0.project(l.lon, l.lat);
     pin(x, y, l.top ?? 26, l.name.toUpperCase(), placed, theme.label, theme.labelText);
   }
@@ -433,9 +433,18 @@ if (import.meta.env.DEV) {
   (window as unknown as { __select: unknown }).__select = (name: string) => showInfo(world.buildings.findIndex((b) => b.info?.name === name));
 }
 
+/** Place names on the map; the choice is remembered. */
+let showNames = localStorage.getItem("tp-names") !== "off";
+
+function toggleNames() {
+  showNames = !showNames;
+  localStorage.setItem("tp-names", showNames ? "on" : "off");
+  $("names").setAttribute("aria-pressed", String(showNames));
+  requestPresent();
+}
+
 function togglePainted() {
   showPainted = !showPainted;
-  $("painted").setAttribute("aria-pressed", String(showPainted));
   requestRender(); // the vector map underneath is drawn differently with and without it
 }
 
@@ -617,8 +626,10 @@ function setupInput() {
     const k = e.key.toLowerCase();
     if (k === "+" || k === "=") glideZoom(1.4);
     else if (k === "-" || k === "_") glideZoom(1 / 1.4);
-    else if (k === "a") togglePainted();
+    // Dev only: the plain 3D map the painting was made from, to check alignment.
+    else if (k === "a" && import.meta.env.DEV) togglePainted();
     else if (k === "w") wander();
+    else if (k === "n") toggleNames();
     else if (k === "h") {
       follow(null);
       flyTo(fitBounds());
@@ -629,9 +640,10 @@ function setupInput() {
     }
   });
 
+  $("names").setAttribute("aria-pressed", String(showNames));
+  $("names").onclick = toggleNames;
   $("zoom-in").onclick = () => glideZoom(1.5);
   $("zoom-out").onclick = () => glideZoom(1 / 1.5);
-  $("painted").onclick = togglePainted;
   $("home").onclick = () => {
     follow(null);
     flyTo(fitBounds());
@@ -747,7 +759,6 @@ async function main() {
   // The painting first: its manifest and the outline are a few kB, so the map
   // shows in a second; the city's data (13 MB) follows for traffic and clicks.
   [frame0, painted] = await Promise.all([loadFrame("/data/paris-meta.json"), PaintedLayer.load(() => requestPresent())]);
-  $("painted").hidden = !painted;
   resize();
   Object.assign(cam, startView());
   setupInput();

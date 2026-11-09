@@ -274,7 +274,8 @@ h1 {
   box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.85);
 }
 
-/* Phones show a "fit" glyph instead of the label. */
+/* Phones show glyphs instead of the labels. */
+.controls .tag,
 .controls .fit {
   display: none;
   width: 16px;
@@ -282,6 +283,11 @@ h1 {
   fill: none;
   stroke: var(--enamel);
   stroke-width: 2.2;
+}
+
+.controls .tag {
+  stroke-width: 1.6;
+  stroke-linejoin: round;
 }
 
 /* An action, not a switch: always filled. */
@@ -989,23 +995,43 @@ h1 {
     width: 34px;
     height: 34px;
   }
-  #painted {
-    display: none;
-  }
   #home {
     display: grid;
     place-items: center;
+    gap: 0;
     height: 34px;
     padding: 0;
     font-size: 0;
     border-radius: 4px;
     background: #fff;
   }
-  #home i {
+  #home i,
+  #names i,
+  #home span,
+  #names span {
     display: none;
   }
-  #home .fit {
+  #home .fit,
+  #names .tag {
     display: block;
+  }
+  /* A switch: filled in enamel while names show. */
+  #names {
+    display: grid;
+    place-items: center;
+    gap: 0;
+    height: 34px;
+    padding: 0;
+    font-size: 0;
+    border-radius: 4px;
+    background: #fff;
+  }
+  #names[aria-pressed="true"] {
+    background: var(--enamel);
+    box-shadow: inset 0 0 0 2px #fff;
+  }
+  #names[aria-pressed="true"] .tag {
+    stroke: #fff;
   }
   .places {
     left: 10px;
