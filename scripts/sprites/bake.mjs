@@ -43,7 +43,9 @@ const specs = [
   ...CARS_PROC.map(([id, shape, paint, taxi]) => ({ id, kind: "car", shape, paint, taxi, dirs: 32, P: 24 })),
   ...CARS.map(([id, name, length, swaps]) => ({ id, kind: "glb", name, length, swaps, dirs: 16, P: 24 })),
   { id: "bus", kind: "bus", dirs: 16, P: 20 },
-  { id: "metro", kind: "metro", dirs: 16, P: 20 },
+  // Long cars: 32 headings, or one 11° off its track shows on curves.
+  { id: "metro", kind: "metro", dirs: 32, P: 16 },
+  { id: "metro-head", kind: "metro", head: true, dirs: 32, P: 16 },
   { id: "rer", kind: "rail", style: "rer", dirs: 16, P: 16 },
   { id: "intercity", kind: "rail", style: "intercity", dirs: 16, P: 16 },
   { id: "peniche", kind: "peniche", dirs: 16, P: 12 },

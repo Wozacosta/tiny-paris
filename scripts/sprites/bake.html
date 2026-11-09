@@ -265,23 +265,90 @@ function car(type, paint, opts = {}) {
   return { group: g, length: L };
 }
 
-/** MF01-style métro car: white body, dark windows, blue-green stripe. */
-function metroCar() {
+/**
+ * A Paris métro car (MF01-like), facing +Z: a flat-sided white body on a dark
+ * underframe, a dark window band, three pairs of doors a side, the RATP jade
+ * stripe, roof units, and rubber gangways at the ends that join it to the next
+ * car, so a train reads as one. `head` puts a cab at the front instead: a
+ * windscreen raked back, headlights and a coupler.
+ */
+function metroCar(head = false) {
   const g = new THREE.Group();
-  const L = 15, W = 2.4, H = 3.2;
-  const side = canvasTex(1500, 320, (c, w, h) => {
-    c.fillStyle = "#e9ecef"; c.fillRect(0, 0, w, h);
-    c.fillStyle = "#1c2733"; for (let x = 60; x < w - 60; x += 180) c.fillRect(x, 60, 140, 110);
-    c.fillStyle = "#33404c"; for (const x of [230, 680, 1130]) c.fillRect(x, 50, 110, 250);
-    c.fillStyle = "#1e8a7a"; c.fillRect(0, 205, w, 22);
-    c.fillStyle = "#2f6fb6"; c.fillRect(0, 227, w, 14);
+  const L = 15, W = 2.42, floor = 1.0, H = 3.5;
+  const back = -L / 2, front = L / 2;
+  const white = mat(0xeef0f1, { roughness: 0.45 });
+  const dark = mat(0x23262b, { roughness: 0.8 });
+  const glass = mat(0x18202a, { roughness: 0.08, metalness: 0.35 });
+  // The side livery, drawn along the car from back (left) to front (right).
+  const side = canvasTex(1500, 250, (c, w, h) => {
+    const y = (m) => h - ((m - floor) / (H - floor)) * h, x = (m) => ((m - back) / L) * w;
+    c.fillStyle = "#eef0f1"; c.fillRect(0, 0, w, h);
+    c.fillStyle = "#1a222c"; c.fillRect(x(back + 0.3), y(3.05), x(front - (head ? 2.2 : 0.3)) - x(back + 0.3), y(1.95) - y(3.05)); // window band
+    c.fillStyle = "#eef0f1";
+    for (let m = back + 1.6; m < front - (head ? 2.2 : 0.3); m += 1.5) c.fillRect(x(m), y(3.05), 5, y(1.95) - y(3.05)); // pillars
+    c.fillStyle = "#00a88f"; c.fillRect(0, y(1.8), w, y(1.55) - y(1.8)); // jade stripe
+    for (const m of [-4.6, 0, 4.6]) {
+      // Double doors: light frames, dark glazing in each leaf.
+      c.fillStyle = "#d9dde0"; c.fillRect(x(m - 0.7), y(3.15), x(m + 0.7) - x(m - 0.7), h - y(3.15));
+      c.fillStyle = "#1a222c";
+      for (const d of [-0.62, 0.08]) c.fillRect(x(m + d), y(3.0), x(m + d + 0.54) - x(m + d), y(1.9) - y(3.0));
+      c.fillStyle = "#9aa1a7"; c.fillRect(x(m) - 1, y(3.15), 3, h - y(3.15));
+    }
   });
-  const body = new THREE.Mesh(new RoundedBoxGeometry(W, H - 0.4, L, 4, 0.3), [
-    mat(0xe9ecef, { map: side }), mat(0xe9ecef, { map: side }), mat(0xd9dde1), mat(0x2b2b30), mat(0x1c2733), mat(0x1c2733),
-  ]);
-  body.position.y = 0.4 + (H - 0.4) / 2;
+  const end = mat(0xe6e9eb, { roughness: 0.5 });
+  const sideMat = mat(0xffffff, { map: side, roughness: 0.45 });
+  // Body: a box from the floor up, nearly square-cornered like the real car.
+  const bodyLen = head ? L - 1.2 : L;
+  const body = new THREE.Mesh(new RoundedBoxGeometry(W, H - floor, bodyLen, 3, 0.12), [sideMat, sideMat, mat(0xd5d9dc, { roughness: 0.6 }), dark, end, end]);
+  body.position.set(0, floor + (H - floor) / 2, head ? -0.6 : 0);
   g.add(body);
-  wheels(g, [[-0.9, 5.5], [0.9, 5.5], [-0.9, -5.5], [0.9, -5.5]], 0.4, 0.25, 0x2a2a2e);
+  // Underframe and bogies, dark and set in.
+  const under = new THREE.Mesh(new THREE.BoxGeometry(W - 0.3, floor - 0.35, L - 1.0), dark);
+  under.position.y = 0.35 + (floor - 0.35) / 2;
+  g.add(under);
+  for (const z of [back + 2.4, front - 2.4]) {
+    const bogie = new THREE.Mesh(new THREE.BoxGeometry(W - 0.2, 0.55, 2.4), mat(0x2d3036, { roughness: 0.9 }));
+    bogie.position.set(0, 0.45, z);
+    g.add(bogie);
+  }
+  // Roof: two flat ventilation units.
+  for (const z of [-3.4, 3.4]) {
+    const unit = new THREE.Mesh(new RoundedBoxGeometry(1.6, 0.28, 3.2, 2, 0.08), mat(0xb7bdc2, { roughness: 0.55 }));
+    unit.position.set(0, H + 0.12, z);
+    g.add(unit);
+  }
+  // Gangways: dark rubber bellows at the ends that meet the next car.
+  const gangway = (z) => {
+    const b = new THREE.Mesh(new RoundedBoxGeometry(W - 0.5, H - floor - 0.45, 0.5, 2, 0.1), dark);
+    b.position.set(0, floor + (H - floor - 0.45) / 2 + 0.1, z);
+    g.add(b);
+  };
+  gangway(back - 0.05);
+  if (!head) gangway(front + 0.05);
+  else {
+    // The cab: a white nose with the windscreen raked back over it.
+    const cab = new THREE.Mesh(new RoundedBoxGeometry(W, 1.15, 1.25, 3, 0.18), white);
+    cab.position.set(0, floor + 0.575, front - 0.62);
+    g.add(cab);
+    const screen = new THREE.Mesh(new RoundedBoxGeometry(W - 0.12, 1.6, 0.18, 2, 0.08), glass);
+    screen.position.set(0, floor + 1.15 + 0.72, front - 0.85);
+    screen.rotation.x = -0.32;
+    g.add(screen);
+    const cap = new THREE.Mesh(new RoundedBoxGeometry(W, 0.3, 1.1, 2, 0.12), white);
+    cap.position.set(0, H - 0.12, front - 0.95);
+    g.add(cap);
+    for (const sideX of [-0.8, 0.8]) {
+      const light = new THREE.Mesh(new RoundedBoxGeometry(0.42, 0.16, 0.06, 2, 0.04), mat(0xfaf6e6, { emissive: 0x77735f, roughness: 0.2 }));
+      light.position.set(sideX, floor + 0.55, front + 0.01);
+      g.add(light);
+    }
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(W + 0.01, 0.25, 1.26), mat(0x00a88f, { roughness: 0.5 }));
+    stripe.position.set(0, floor + 0.68, front - 0.62);
+    g.add(stripe);
+    const coupler = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.3, 0.4), dark);
+    coupler.position.set(0, floor - 0.2, front + 0.1);
+    g.add(coupler);
+  }
   return { group: g, length: L };
 }
 
@@ -501,7 +568,7 @@ window.bake = async (spec) => {
       obj.add(rider);
     } else if (spec.kind === "car") obj = car(spec.shape, parseInt(spec.paint.slice(1), 16), { taxi: spec.taxi }).group;
     else if (spec.kind === "bus") obj = bus().group;
-    else if (spec.kind === "metro") obj = metroCar().group;
+    else if (spec.kind === "metro") obj = metroCar(spec.head).group;
     else if (spec.kind === "rail") obj = railCar(spec.style).group;
     else if (spec.kind === "peniche") obj = peniche().group;
     else if (spec.kind === "mouche") obj = mouche().group;

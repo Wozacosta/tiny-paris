@@ -367,7 +367,8 @@ export class Traffic {
             if (s < 0 || s > l.len) continue;
             const p = sample(l, s);
             if (p.z <= -TRAIN_FADE || !inView(p.x, p.y, p.z, 20)) continue;
-            const item = { depth: depthOf(r, p.x, p.y), draw: () => this.drawTrainCar(ctx, r, p, theme, k === 0) };
+            const end = k === 0 ? "head" : k === TRAIN_CARS - 1 ? "tail" : "mid";
+            const item = { depth: depthOf(r, p.x, p.y), draw: () => this.drawTrainCar(ctx, r, p, theme, end) };
             // Up on a viaduct, over the painting, which always shows it.
             (raisedApart && p.z >= 2 ? this.raised : items).push(item);
           }
@@ -595,12 +596,14 @@ export class Traffic {
     }
   }
 
-  private drawTrainCar(ctx: CanvasRenderingContext2D, r: Rotation, p: Sample, theme: Theme, head: boolean) {
+  /** One car of a train: a cab at each end (the tail's facing back), plain cars between. */
+  private drawTrainCar(ctx: CanvasRenderingContext2D, r: Rotation, p: Sample, theme: Theme, end: "head" | "mid" | "tail") {
+    const head = end === "head";
     if (p.z < 0) {
       // Going down into the trench: fade into its shade, then the tunnel.
       ctx.save();
       ctx.globalAlpha = Math.max(0, 1 + p.z / TRAIN_FADE);
-      this.drawTrainCar(ctx, r, { ...p, z: 0 }, theme, head);
+      this.drawTrainCar(ctx, r, { ...p, z: 0 }, theme, end);
       ctx.restore();
       return;
     }
@@ -608,13 +611,16 @@ export class Traffic {
     const z = p.z + 0.2;
     // Its shadow on the viaduct's deck, so it sits on it rather than hovering.
     if (p.z >= 4.5) trackShadow(ctx, r, p, TRAIN_CAR_LEN, 2.6);
-    if (this.useSprites && this.sprites!.draw(ctx, r, "metro", p.x, p.y, z, p.tx, p.ty)) {
+    const back = end === "tail" ? -1 : 1;
+    if (this.useSprites && this.sprites!.draw(ctx, r, end === "mid" ? "metro" : "metro-head", p.x, p.y, z, p.tx * back, p.ty * back)) {
       if (head && theme.headlight) dot(ctx, r, p.x + p.tx * 7.5, p.y + p.ty * 7.5, z + 0.8, theme.headlight, 1);
       return;
     }
-    box(ctx, r, p.x, p.y, z, p.tx, p.ty, TRAIN_CAR_LEN, 2.4, 1.1, night ? "#1f4d86" : "#2f6fb6", null);
-    box(ctx, r, p.x, p.y, z + 1.1, p.tx, p.ty, TRAIN_CAR_LEN, 2.4, 1.0, night ? "#ffe2a0" : "#3a4652", null);
-    box(ctx, r, p.x, p.y, z + 2.1, p.tx, p.ty, TRAIN_CAR_LEN, 2.4, 0.5, night ? "#9aa0ad" : "#e3e7ec", night ? "#b3b8c4" : "#f2f4f7");
+    // From afar, the same car in three bands: white body, window band, roof.
+    box(ctx, r, p.x, p.y, z + 0.3, p.tx, p.ty, TRAIN_CAR_LEN, 2.2, 0.7, "#2a2d32", null);
+    box(ctx, r, p.x, p.y, z + 1.0, p.tx, p.ty, TRAIN_CAR_LEN, 2.4, 0.9, night ? "#9aa0ad" : "#e6e9eb", null);
+    box(ctx, r, p.x, p.y, z + 1.9, p.tx, p.ty, TRAIN_CAR_LEN, 2.4, 1.1, night ? "#ffe2a0" : "#1d2530", null);
+    box(ctx, r, p.x, p.y, z + 3.0, p.tx, p.ty, TRAIN_CAR_LEN, 2.4, 0.5, night ? "#9aa0ad" : "#e6e9eb", night ? "#b3b8c4" : "#d9dde0");
     if (head && theme.headlight) dot(ctx, r, p.x + p.tx * 7.5, p.y + p.ty * 7.5, z + 0.8, theme.headlight, 1);
   }
 }
