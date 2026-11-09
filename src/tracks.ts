@@ -4,15 +4,15 @@
 // the painting follows, so both show the same thing.
 
 import type { Lane } from "./model";
-import { depthOf, type Rotation } from "./render";
+import { depthOf, worldToIso, type Rotation } from "./render";
 import { box, sample, type Sample } from "./shapes";
 
 /** Below this height a line runs on a solid ramp rather than on columns. */
 const RAMP_TOP = 4.5;
 /** Track this far below the street is in the tunnel: deep enough to hide a train. */
 const PORTAL = -4.5;
-/** Track within this of the street is level with it: nothing to build. */
-const LEVEL = 0.3;
+/** Track at street level (neither bridge nor tunnel in the map data) runs in a cutting this deep: Paris has no métro on the street itself. */
+const CUTTING = -3;
 
 export interface TrackPiece extends Sample {
   /** Index of its line in world.metro. */
@@ -41,8 +41,8 @@ export function trackPieces(metro: Lane[], step: number, pillarEvery: number): T
     for (let s = 0; s < l.len; s += step) {
       const L = Math.min(step, l.len - s);
       const p = sample(l, s + L / 2);
-      if (p.z <= PORTAL || Math.abs(p.z) < LEVEL) continue;
-      const kind = p.z >= RAMP_TOP ? "viaduct" : p.z > 0 ? "ramp" : "trench";
+      if (p.z <= PORTAL) continue;
+      const kind = p.z >= RAMP_TOP ? "viaduct" : p.z > 0.3 ? "ramp" : "trench";
       out.push({ ...p, lane, L: L + 0.4, kind, pillar: Math.floor((s + step) / pillarEvery) !== Math.floor(s / pillarEvery) });
     }
   });
@@ -57,10 +57,26 @@ export function pieceDepth(r: Rotation, p: TrackPiece) {
 export function drawTrackPiece(ctx: CanvasRenderingContext2D, r: Rotation, p: TrackPiece, st: TrackStyle) {
   const { x, y, z, tx, ty, L } = p;
   if (p.kind === "trench") {
-    // The opening in the street, dark, between low walls.
-    box(ctx, r, x, y, 0, tx, ty, L, st.deckW + 0.6, 0.02, st.trench, st.trench);
+    // Seen through its opening in the street: the floor down at track level
+    // and the inside of the walls, so it reads as a cutting, not a deck.
+    const hw = st.deckW / 2 + 0.3, hl = L / 2, depth = Math.max(PORTAL, Math.min(z, CUTTING));
+    const nx = -ty, ny = tx;
+    ctx.save();
+    ctx.beginPath();
+    for (const [a, b] of [[1, 1], [1, -1], [-1, -1], [-1, 1]]) {
+      const [sx, sy] = worldToIso(r, x + tx * hl * a + nx * hw * b, y + ty * hl * a + ny * hw * b);
+      ctx.lineTo(sx, sy);
+    }
+    ctx.clip();
     for (const side of [-1, 1]) {
-      const off = side * (st.deckW / 2 + 0.3);
+      const off = side * hw;
+      box(ctx, r, x - ty * off, y + tx * off, depth, tx, ty, L, 0.4, -depth, st.stone[0], null);
+    }
+    box(ctx, r, x, y, depth, tx, ty, L, st.deckW, 0.02, st.trench, st.trench);
+    ctx.restore();
+    // Low parapets along the top.
+    for (const side of [-1, 1]) {
+      const off = side * hw;
       box(ctx, r, x - ty * off, y + tx * off, 0, tx, ty, L, 0.4, 0.9, st.stone[0], st.stone[1]);
     }
     return;
