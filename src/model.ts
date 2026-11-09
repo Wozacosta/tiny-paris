@@ -490,7 +490,7 @@ async function fetchBytes(url: string, expected: number, onProgress?: (f: number
 }
 
 /** Reads public/data/paris.bin, written by scripts/pack.mjs in this same order. */
-function unpack(buf: ArrayBuffer): Raw {
+export function unpack(buf: ArrayBuffer): Raw {
   const head = new DataView(buf);
   if (new TextDecoder().decode(new Uint8Array(buf, 0, 4)) !== "TPB1") throw new Error("not a Tiny Paris data file");
   const len = head.getUint32(4, true);

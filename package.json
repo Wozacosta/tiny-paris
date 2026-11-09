@@ -6,6 +6,9 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "typecheck": "tsc && tsc -p api",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
     "data": "node scripts/fetch-osm.mjs",
     "paint:base": "node scripts/paint/1-base.mjs",
     "paint": "node scripts/paint/2-paint.mjs",
@@ -16,11 +19,13 @@
   },
   "type": "module",
   "devDependencies": {
+    "@playwright/test": "^1.65.0",
     "playwright-core": "^1.65.0",
     "polygon-clipping": "^0.15.7",
     "three": "^0.187.0",
     "typescript": "^7.0.2",
-    "vite": "^8.3.6"
+    "vite": "^8.3.6",
+    "vitest": "^5.1.0"
   },
   "private": true,
   "dependencies": {
