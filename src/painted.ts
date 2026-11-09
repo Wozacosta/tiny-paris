@@ -35,10 +35,12 @@ export class PaintedLayer {
     return this.m.rotation;
   }
 
-  private image(level: number, c: number, r: number) {
+  /** A chunk's image, fetching it if it isn't here yet; `peek` only looks. */
+  private image(level: number, c: number, r: number, peek = false) {
     const key = `${level}/${c}_${r}`;
     const got = this.chunks.get(key);
     if (got === undefined) {
+      if (peek) return null;
       this.chunks.set(key, "loading");
       fetch(`/painted/${key}.webp`)
         .then((res) => res.blob())
@@ -94,22 +96,34 @@ export class PaintedLayer {
     this.m.levels.forEach((l, i) => {
       if (l.scale >= want) target = i;
     });
-    // Chunks of a level in view, with their images where loaded.
-    const inView = (li: number) => {
+    // Chunks of a level in view, with their images where loaded (fetched unless `peek`).
+    const inView = (li: number, peek = false) => {
       const { scale, chunks } = this.m.levels[li];
       const size = this.m.chunk / scale / this.m.zoom; // chunk size in iso units
       const out: { x: number; y: number; size: number; img: ImageBitmap | null }[] = [];
       for (const [c, r] of chunks) {
         const x = this.m.origin[0] + c * size, y = this.m.origin[1] + r * size;
         if (x > vx1 || y > vy1 || x + size < vx0 || y + size < vy0) continue;
-        out.push({ x, y, size, img: this.image(li, c, r) });
+        out.push({ x, y, size, img: this.image(li, c, r, peek) });
       }
       return out;
     };
     const sharp = inView(target);
-    // The coarsest level as a backdrop, only while sharper chunks load.
     const last = this.m.levels.length - 1;
-    const layers = target !== last && sharp.some((t) => !t.img) ? [inView(last), sharp] : [sharp];
-    for (const layer of layers) for (const t of layer) if (t.img) ctx.drawImage(t.img, t.x, t.y, t.size, t.size);
+    // Zooming in, the next sharper level is about to be needed: start on it.
+    if (target > 0 && this.m.levels[target - 1].scale < want * 1.35) inView(target - 1);
+    // While sharper chunks load, fill in with what's already decoded: the
+    // coarsest level as a backdrop (fetched: it's small), then the levels
+    // either side, which are what was on screen a moment ago. Falling back to
+    // the coarsest alone made every change of level flash blurry.
+    const layers = [sharp];
+    if (sharp.some((t) => !t.img)) {
+      const near = [target + 1, target - 1].filter((li) => li >= 0 && li < last).map((li) => inView(li, true));
+      layers.unshift(...(target !== last ? [inView(last)] : []), ...near);
+    }
+    // A screen pixel larger each way, so neighbours overlap: drawn edge to edge
+    // at fractional positions they leave hairline seams that flicker as you zoom.
+    const pad = 1 / z;
+    for (const layer of layers) for (const t of layer) if (t.img) ctx.drawImage(t.img, t.x, t.y, t.size + pad, t.size + pad);
   }
 }

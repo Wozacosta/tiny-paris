@@ -5,11 +5,12 @@
 // buildings in front hide whatever is behind them for free.
 
 import { BIKE_ROADS, CAR_ROADS, TRUCK_ROADS, type Lane, type Transit, type World } from "./model";
-import { depthOf, worldToIso, type Rotation } from "./render";
+import { depthOf, worldToIso, type Occluder, type Rotation } from "./render";
 import { Life } from "./life";
 import { MOVERS_ZOOM, PEOPLE_ZOOM } from "./streetlife";
 import { box, dot, groundShadow, person, sample, shade, SHIRTS, SKINS, type Sample } from "./shapes";
 import type { Sprites } from "./sprites";
+import { drawTrackPiece, pieceDepth, trackPieces, type TrackPiece, type TrackStyle } from "./tracks";
 
 /** Car sprites, weighted roughly like Paris traffic (lots of white, grey and black). */
 const CAR_SPRITES = [
@@ -40,20 +41,19 @@ interface Vehicle {
 
 const TRAIN_CARS = 5;
 const TRAIN_CAR_LEN = 15;
+/** Between cars: just the gangway. */
+const TRAIN_GAP = 0.2;
+/** Depth below the street over which a train going underground fades out. */
+const TRAIN_FADE = 3.5;
 const PILLAR_EVERY = 14;
 
 const VELIB_GREEN = "#86b817";
 const VELIB_BLUE = "#2f7fc2";
 
-interface ViaductPiece {
-  x: number;
-  y: number;
-  z: number;
-  tx: number;
-  ty: number;
-  L: number;
-  pillar: boolean;
-}
+const TRACK_DAY: TrackStyle = {
+  deckW: 5, deckH: 1.2, deck: ["#55665e", "#73837a"], stone: ["#c9bda6", "#d8cdb8"], pillarW: 1.2, trench: "#3d4340",
+};
+const TRACK_NIGHT: TrackStyle = { ...TRACK_DAY, deck: ["#2f3a3c", "#3d4a4b"], stone: ["#5a5670", "#66627c"], trench: "#1d2124" };
 
 interface Station {
   x: number;
@@ -67,7 +67,9 @@ interface Station {
 
 export class Traffic {
   private vehicles: Vehicle[] = [];
-  private viaduct: ViaductPiece[] = [];
+  private track: TrackPiece[] = [];
+  /** Raised trains held back by draw(raisedApart), for drawRaised. */
+  private raised: { depth: number; draw: () => void }[] = [];
   /** Off when the painting already shows the viaduct: only the trains go on top. */
   showViaduct = true;
   private stations: Station[] = [];
@@ -150,15 +152,7 @@ export class Traffic {
       for (let k = 0; k < Math.max(1, Math.round(l.len / 900)); k++) add({ kind: TRAIN, lane: i, s: Math.random() * l.len, dir: 1, speed: 11, color: 0 });
     });
 
-    // Cut elevated track into short straight pieces with pillars underneath.
-    for (const l of metro) {
-      for (let s = 0; s < l.len; s += 8) {
-        const L = Math.min(8, l.len - s);
-        const p = sample(l, s + L / 2);
-        if (p.z < 2) continue;
-        this.viaduct.push({ ...p, L: L + 0.4, pillar: Math.floor((s + 8) / PILLAR_EVERY) !== Math.floor(s / PILLAR_EVERY) });
-      }
-    }
+    this.track = trackPieces(metro, 8, PILLAR_EVERY);
 
     this.stations = transit.velib.map((v, i) => this.placeStation(v.x, v.y, v.capacity, i));
   }
@@ -227,6 +221,19 @@ export class Traffic {
         : v.kind === TRUCK)
       .map(({ i }) => i);
     return ids.length ? ids[Math.floor(Math.random() * ids.length)] : null;
+  }
+
+  /** Dev: puts a train's head at the track point nearest (x, y), optionally stopped there. */
+  placeTrain(x: number, y: number, stop = false) {
+    let best = Infinity, lane = 0, s = 0;
+    this.world.metro.forEach((l, i) => {
+      for (let k = 0; k < l.pts.length / 2; k++) {
+        const d = Math.hypot(l.pts[k * 2] - x, l.pts[k * 2 + 1] - y);
+        if (d < best) [best, lane, s] = [d, i, l.cum[k]];
+      }
+    });
+    const v = this.vehicles.find((v) => v.kind === TRAIN)!;
+    Object.assign(v, { lane, s, speed: stop ? 0 : 11 });
   }
 
   /** World position of a vehicle, and a label for it. */
@@ -324,7 +331,7 @@ export class Traffic {
    */
   draw(
     ctx: CanvasRenderingContext2D, r: Rotation, view: [number, number, number, number], theme: Theme, cssZoom: number,
-    only: number | null = null, occluders: { depth: number; draw: () => void }[] = [],
+    only: number | null = null, occluders: { depth: number; draw: () => void }[] = [], raisedApart = false,
   ) {
     const [x0, y0, x1, y1] = view;
     const inView = (x: number, y: number, z: number, pad: number) => {
@@ -335,16 +342,12 @@ export class Traffic {
     const items: { depth: number; draw: () => void }[] = [];
     this.useSprites = !!this.sprites && cssZoom >= SPRITE_ZOOM;
 
-    for (const p of only == null && this.showViaduct ? this.viaduct : []) {
-      if (!inView(p.x, p.y, p.z, 30)) continue;
-      items.push({
-        depth: depthOf(r, p.x, p.y) - 0.5,
-        draw: () => {
-          if (p.pillar) box(ctx, r, p.x, p.y, 0, p.tx, p.ty, 1.2, 1.2, p.z - 1.4, night ? "#5a5670" : "#c9bda6", null);
-          box(ctx, r, p.x, p.y, p.z - 1.4, p.tx, p.ty, p.L, 5, 1.2, night ? "#2f3a3c" : "#55665e", night ? "#3d4a4b" : "#73837a");
-        },
-      });
+    const trackStyle = night ? TRACK_NIGHT : TRACK_DAY;
+    for (const p of only == null && this.showViaduct ? this.track : []) {
+      if (!inView(p.x, p.y, Math.max(0, p.z), 30)) continue;
+      items.push({ depth: pieceDepth(r, p), draw: () => drawTrackPiece(ctx, r, p, trackStyle) });
     }
+    this.raised = [];
 
     if (cssZoom >= 1.2 && only == null) {
       for (const st of this.stations) {
@@ -360,11 +363,13 @@ export class Traffic {
         if (v.kind === TRAIN) {
           const l = metro[v.lane];
           for (let k = 0; k < TRAIN_CARS; k++) {
-            const s = v.s - k * (TRAIN_CAR_LEN + 0.6) - TRAIN_CAR_LEN / 2;
+            const s = v.s - k * (TRAIN_CAR_LEN + TRAIN_GAP) - TRAIN_CAR_LEN / 2;
             if (s < 0 || s > l.len) continue;
             const p = sample(l, s);
-            if (p.z < -0.5 || !inView(p.x, p.y, p.z, 20)) continue;
-            items.push({ depth: depthOf(r, p.x, p.y), draw: () => this.drawTrainCar(ctx, r, p, theme, k === 0) });
+            if (p.z <= -TRAIN_FADE || !inView(p.x, p.y, p.z, 20)) continue;
+            const item = { depth: depthOf(r, p.x, p.y), draw: () => this.drawTrainCar(ctx, r, p, theme, k === 0) };
+            // Up on a viaduct, over the painting, which always shows it.
+            (raisedApart && p.z >= 2 ? this.raised : items).push(item);
           }
           continue;
         }
@@ -398,6 +403,24 @@ export class Traffic {
     items.push(...occluders);
     items.sort((a, b) => a.depth - b.depth);
     for (const it of items) it.draw();
+  }
+
+  /** Whether the last draw(…, raisedApart) held back any raised trains. */
+  get hasRaised() {
+    return this.raised.length > 0;
+  }
+
+  /**
+   * The raised trains the last draw(…, raisedApart) held back, on a layer of
+   * their own. A building hides them only from behind its rearmost corner:
+   * sorted by its middle, a big building like the Rotonde cut trains running
+   * along its front into slivers.
+   */
+  drawRaised(occluders: Occluder[] = []) {
+    const items = [...this.raised, ...occluders.map((o) => ({ depth: o.back, draw: o.draw }))];
+    items.sort((a, b) => a.depth - b.depth);
+    for (const it of items) it.draw();
+    this.raised = [];
   }
 
   private drawCar(ctx: CanvasRenderingContext2D, r: Rotation, x: number, y: number, tx: number, ty: number, color: number, theme: Theme) {
@@ -573,8 +596,18 @@ export class Traffic {
   }
 
   private drawTrainCar(ctx: CanvasRenderingContext2D, r: Rotation, p: Sample, theme: Theme, head: boolean) {
+    if (p.z < 0) {
+      // Going down into the trench: fade into its shade, then the tunnel.
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, 1 + p.z / TRAIN_FADE);
+      this.drawTrainCar(ctx, r, { ...p, z: 0 }, theme, head);
+      ctx.restore();
+      return;
+    }
     const night = theme.name === "night";
-    const z = Math.max(p.z, -0.5) + 0.2;
+    const z = p.z + 0.2;
+    // Its shadow on the viaduct's deck, so it sits on it rather than hovering.
+    if (p.z >= 4.5) trackShadow(ctx, r, p, TRAIN_CAR_LEN, 2.6);
     if (this.useSprites && this.sprites!.draw(ctx, r, "metro", p.x, p.y, z, p.tx, p.ty)) {
       if (head && theme.headlight) dot(ctx, r, p.x + p.tx * 7.5, p.y + p.ty * 7.5, z + 0.8, theme.headlight, 1);
       return;
@@ -586,3 +619,15 @@ export class Traffic {
   }
 }
 
+/** A train's shadow on its deck: the sun is south-west, so it falls north-east of it. */
+function trackShadow(ctx: CanvasRenderingContext2D, r: Rotation, p: Sample, L: number, W: number) {
+  const nx = -p.ty, ny = p.tx;
+  const pts = [[1, 1], [1, -1], [-1, -1], [-1, 1]].map(([a, b]) => {
+    const [sx, sy] = worldToIso(r, p.x + p.tx * (L / 2) * a + nx * (W / 2) * b + 0.6, p.y + p.ty * (L / 2) * a + ny * (W / 2) * b - 0.6, p.z + 0.05);
+    return [sx, sy];
+  });
+  ctx.fillStyle = "rgba(20, 24, 30, 0.32)";
+  ctx.beginPath();
+  pts.forEach(([sx, sy], i) => (i ? ctx.lineTo(sx, sy) : ctx.moveTo(sx, sy)));
+  ctx.fill();
+}

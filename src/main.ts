@@ -53,6 +53,8 @@ const buildSnap = document.createElement("canvas");
 const groundCtx = groundSnap.getContext("2d")!;
 const movers = document.createElement("canvas");
 const moversCtx = movers.getContext("2d")!;
+const raisedLayer = document.createElement("canvas");
+const raisedCtx = raisedLayer.getContext("2d")!;
 const buildCtx = buildSnap.getContext("2d")!;
 const SNAP_MARGIN = 0.2;
 let snapCam: Camera | null = null;
@@ -164,16 +166,31 @@ function present() {
   moversCtx.setTransform(z, 0, 0, z, ox, oy);
   const hw = canvas.width / 2 / z, hh = canvas.height / 2 / z;
   const rect: [number, number, number, number] = [cam.cx - hw, cam.cy - hh, cam.cx + hw, cam.cy + hh];
+  const overPainting = !!painted && showPainted;
   if (cam.zoom >= OCCLUDE_ZOOM) {
     // Close up, buildings and trees are sorted in with the movers, so each
     // hides only what is behind it.
-    traffic.draw(moversCtx, rotation, rect, theme, cam.zoom, null, occluders(moversCtx, world, view(), rect, 0.6));
+    traffic.draw(moversCtx, rotation, rect, theme, cam.zoom, null, occluders(moversCtx, world, view(), rect, 0.6), overPainting);
   } else {
     // From afar a single cut by the whole building layer is close enough, and cheap.
-    traffic.draw(moversCtx, rotation, rect, theme, cam.zoom);
+    traffic.draw(moversCtx, rotation, rect, theme, cam.zoom, null, [], overPainting);
     moversCtx.globalCompositeOperation = "destination-out";
     blit(moversCtx, buildSnap);
     moversCtx.globalCompositeOperation = "source-over";
+  }
+  if (traffic.hasRaised) {
+    // Raised trains on their own layer, so the buildings that hide them don't
+    // also cut what's already on the movers' layer.
+    if (raisedLayer.width !== canvas.width || raisedLayer.height !== canvas.height) {
+      raisedLayer.width = canvas.width;
+      raisedLayer.height = canvas.height;
+    }
+    raisedCtx.setTransform(1, 0, 0, 1, 0, 0);
+    raisedCtx.clearRect(0, 0, raisedLayer.width, raisedLayer.height);
+    raisedCtx.setTransform(z, 0, 0, z, ox, oy);
+    traffic.drawRaised(cam.zoom >= OCCLUDE_ZOOM ? occluders(raisedCtx, world, view(), rect, 0.6) : []);
+    moversCtx.setTransform(1, 0, 0, 1, 0, 0);
+    moversCtx.drawImage(raisedLayer, 0, 0);
   }
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.drawImage(movers, 0, 0);
@@ -343,6 +360,38 @@ function zoomAt(factor: number, sx = innerWidth / 2, sy = innerHeight / 2) {
   requestRender(true);
 }
 
+/** Where an eased zoom is heading, and the screen point it stays anchored at. */
+let zoomGoal: { zoom: number; sx: number; sy: number } | null = null;
+let zoomLast = 0;
+
+/**
+ * Zooms by `factor` over a few frames instead of in one jump: a mouse wheel's
+ * notches and the zoom buttons otherwise move in visible steps. Steps taken
+ * before it gets there add up.
+ */
+function glideZoom(factor: number, sx = innerWidth / 2, sy = innerHeight / 2) {
+  flight++;
+  const first = !zoomGoal;
+  zoomGoal = { zoom: clampZoom((zoomGoal?.zoom ?? cam.zoom) * factor), sx, sy };
+  if (!first) return;
+  zoomLast = performance.now();
+  const step = (now: number) => {
+    if (!zoomGoal) return;
+    // A fixed share of the way per 16 ms, whatever the frame rate.
+    const k = zoomGoal.zoom / cam.zoom;
+    const t = 1 - Math.pow(0.78, (now - zoomLast) / 16);
+    zoomLast = now;
+    if (Math.abs(Math.log(k)) < 0.003) {
+      zoomAt(k, zoomGoal.sx, zoomGoal.sy);
+      zoomGoal = null;
+      return;
+    }
+    zoomAt(Math.pow(k, t), zoomGoal.sx, zoomGoal.sy);
+    requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
 const screenToIso = (sx: number, sy: number): [number, number] => [
   cam.cx + (sx - innerWidth / 2) / cam.zoom,
   cam.cy + (sy - innerHeight / 2) / cam.zoom,
@@ -353,6 +402,7 @@ function flyTo(target: Camera, ms = 1100) {
   const from = { ...cam };
   const start = performance.now();
   const id = ++flight;
+  zoomGoal = null;
   const step = (now: number) => {
     if (id !== flight) return;
     const t = Math.min(1, (now - start) / ms);
@@ -379,6 +429,7 @@ if (import.meta.env.DEV) {
     cam.zoom = clampZoom(zoom);
     requestRender();
   };
+  (window as unknown as { __train: unknown }).__train = (lon: number, lat: number, stop = true) => traffic.placeTrain(...frame0.project(lon, lat), stop);
   (window as unknown as { __select: unknown }).__select = (name: string) => showInfo(world.buildings.findIndex((b) => b.info?.name === name));
 }
 
@@ -490,6 +541,7 @@ function setupInput() {
     canvas.setPointerCapture(e.pointerId);
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     flight++;
+    zoomGoal = null;
     if (pointers.size === 2) {
       const [p, q] = [...pointers.values()];
       pinch = { d: Math.hypot(p.x - q.x, p.y - q.y), zoom: cam.zoom };
@@ -552,7 +604,10 @@ function setupInput() {
       e.preventDefault();
       flight++;
       const delta = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
-      zoomAt(Math.exp(-delta * 0.0018), e.clientX, e.clientY);
+      // A wheel's notches are big steps: ease through them. A trackpad's
+      // stream of small ones is smooth already, and easing would lag it.
+      if (Math.abs(delta) >= 40 || zoomGoal) glideZoom(Math.exp(-delta * 0.0018), e.clientX, e.clientY);
+      else zoomAt(Math.exp(-delta * 0.0018), e.clientX, e.clientY);
     },
     { passive: false },
   );
@@ -560,8 +615,8 @@ function setupInput() {
   addEventListener("keydown", (e) => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     const k = e.key.toLowerCase();
-    if (k === "+" || k === "=") zoomAt(1.4);
-    else if (k === "-" || k === "_") zoomAt(1 / 1.4);
+    if (k === "+" || k === "=") glideZoom(1.4);
+    else if (k === "-" || k === "_") glideZoom(1 / 1.4);
     else if (k === "a") togglePainted();
     else if (k === "w") wander();
     else if (k === "h") {
@@ -574,8 +629,8 @@ function setupInput() {
     }
   });
 
-  $("zoom-in").onclick = () => zoomAt(1.5);
-  $("zoom-out").onclick = () => zoomAt(1 / 1.5);
+  $("zoom-in").onclick = () => glideZoom(1.5);
+  $("zoom-out").onclick = () => glideZoom(1 / 1.5);
   $("painted").onclick = togglePainted;
   $("home").onclick = () => {
     follow(null);

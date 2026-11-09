@@ -465,6 +465,18 @@ export function drawGround(ctx: CanvasRenderingContext2D, world: World, view: Ro
   ctx.restore();
 }
 
+/**
+ * An eraser for whatever is behind a building or trees. `depth` sorts it
+ * among the movers by its middle; `back`, by its rearmost corner, is for long
+ * things passing close by, like trains, which a big building's middle can be
+ * behind even when the train runs in front of it.
+ */
+export interface Occluder {
+  depth: number;
+  back: number;
+  draw: () => void;
+}
+
 /** What occluders() last found near the viewport. */
 let near: { view: RotView; rect: BBox; items: RotView["items"] } | null = null;
 
@@ -483,7 +495,7 @@ export function occluders(ctx: CanvasRenderingContext2D, world: World, view: Rot
     const r: BBox = [vx0 - mx, vy0 - my, vx1 + mx, vy1 + my];
     near = { view, rect: r, items: view.items.filter(({ bbox: b }) => !(b[2] < r[0] || b[0] > r[2] || b[3] < r[1] || b[1] > r[3])) };
   }
-  const out: { depth: number; draw: () => void }[] = [];
+  const out: Occluder[] = [];
   const erase = (fill: (Path2D | null)[], edge: Path2D) => {
     ctx.globalCompositeOperation = "destination-out";
     ctx.fillStyle = "#000";
@@ -501,10 +513,14 @@ export function occluders(ctx: CanvasRenderingContext2D, world: World, view: Rot
     if (x1 < vx0 || x0 > vx1 || y1 < vy0 || y0 > vy1) continue;
     if (it.kind === "b") {
       const b = world.buildings[it.idx];
-      out.push({ depth: depthOf(view.rotation, b.cx, b.cy), draw: () => erase([it.stoneA, it.stoneB, it.mansA, it.mansB, it.roof], it.roof) });
+      const r0 = b.rings[0];
+      let back = Infinity;
+      for (let i = 0; i < r0.length; i += 2) back = Math.min(back, depthOf(view.rotation, r0[i], r0[i + 1]));
+      out.push({ depth: depthOf(view.rotation, b.cx, b.cy), back, draw: () => erase([it.stoneA, it.stoneB, it.mansA, it.mansB, it.roof], it.roof) });
     } else {
       // A band of trees: its ground line is the bottom of the box (depth = 2 × screen y).
-      out.push({ depth: 2 * y1 - DEPTH_BAND / 2, draw: () => erase([it.canopy], it.canopy) });
+      const depth = 2 * y1 - DEPTH_BAND / 2;
+      out.push({ depth, back: depth, draw: () => erase([it.canopy], it.canopy) });
     }
   }
   return out;

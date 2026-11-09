@@ -6,8 +6,9 @@ import {
   Z, buildRotView, depthOf, drawGround, drawStructures, isoToWorld, worldToIso,
   type Extra, type Photo, type RoofShape, type Rotation, type RotView,
 } from "./render";
-import { box, hull, poly, sample } from "./shapes";
+import { box, hull, poly } from "./shapes";
 import { DAY } from "./theme";
+import { drawTrackPiece, trackPieces, type TrackStyle } from "./tracks";
 
 export interface TinyExport {
   /** Iso-space corners of a lon/lat box at ground level, for a view rotation. */
@@ -32,32 +33,17 @@ export interface TinyExport {
 }
 
 /**
- * The métro line 2 viaduct as pieces to merge into the building layer: an
- * iron deck on stone columns. In the app it's drawn live with the trains;
- * in the base render it's part of the city, so the painting shows it.
+ * The métro's structures as pieces to merge into the building layer: iron
+ * decks on pairs of stone columns, solid ramps where a line comes down, open
+ * trenches where it goes under. In the app they're drawn live with the
+ * trains; in the base render they're part of the city, so the painting
+ * shows them.
  */
 function viaductPieces(world: World, r: Rotation): Extra[] {
-  const out: Extra[] = [];
-  for (const l of world.metro) {
-    for (let s = 0; s < l.len; s += 6) {
-      const L = Math.min(6, l.len - s);
-      const p = sample(l, s + L / 2);
-      if (p.z < 2) continue;
-      const pillar = Math.floor((s + 6) / 12) !== Math.floor(s / 12);
-      out.push({
-        depth: depthOf(r, p.x, p.y),
-        draw: (ctx) => {
-          if (pillar) {
-            for (const side of [-1.6, 1.6]) {
-              box(ctx, r, p.x - p.ty * side, p.y + p.tx * side, 0, p.tx, p.ty, 0.9, 0.9, p.z - 1.6, "#bfb39c", "#d6ccb8");
-            }
-          }
-          box(ctx, r, p.x, p.y, p.z - 1.6, p.tx, p.ty, L + 0.3, 5.2, 1.6, "#3e4d47", "#66746c");
-        },
-      });
-    }
-  }
-  return out;
+  const style: TrackStyle = {
+    deckW: 5.2, deckH: 1.6, deck: ["#3e4d47", "#66746c"], stone: ["#bfb39c", "#d6ccb8"], pillarW: 0.9, pillarPair: 1.6, trench: "#363b38",
+  };
+  return trackPieces(world.metro, 6, 12).map((p) => ({ depth: depthOf(r, p.x, p.y), draw: (ctx) => drawTrackPiece(ctx, r, p, style) }));
 }
 
 /**
