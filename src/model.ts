@@ -271,6 +271,8 @@ const MONUMENT_KINDS = new Set([
 /** Landmarks whose data would mislead the classifier. */
 const STYLE_OVERRIDES: Record<string, { style: Style; roof: RoofKind }> = {
   "Gare du Nord": { style: "stone", roof: "glass" },
+  // The 1863 iron-and-glass market hall; BD TOPO dates it to its 2014 restoration.
+  "Carreau du Temple": { style: "stone", roof: "glass" },
   "Cité des Sciences et de l'Industrie": { style: "recent", roof: "glass" },
   "La Géode": { style: "recent", roof: "flat" },
   "Philharmonie de Paris": { style: "recent", roof: "slate" },
