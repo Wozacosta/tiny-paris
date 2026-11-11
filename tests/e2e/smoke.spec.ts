@@ -43,6 +43,17 @@ test("Go to flies to a landmark, and a tap there names its building", async ({ p
   await expect(page.locator("#info-title")).not.toBeEmpty();
 });
 
+test("search finds a building by name and opens its card", async ({ page }) => {
+  await open(page);
+  // Addresses come from the IGN geocoder: answer for it, so the test doesn't need it.
+  await page.route("https://data.geopf.fr/**", (route) => route.fulfill({ json: { features: [] } }));
+  await page.click("#places-toggle");
+  await page.locator("#search").fill("carreau temple");
+  await expect(page.locator("#landmarks button").first()).toContainText("Carreau du Temple");
+  await page.locator("#search").press("Enter");
+  await expect(page.locator("#info-title")).toHaveText("Carreau du Temple");
+});
+
 test("the Names switch hides place names and is remembered", async ({ page }) => {
   await open(page);
   const names = page.locator("#names");

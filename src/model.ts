@@ -180,7 +180,7 @@ export const TRUCK_ROADS = new Set(["residential", "living_street", "unclassifie
 const WALKS = new Set(["footway", "pedestrian", "path", "living_street"]);
 const MAJOR = new Set(["motorway", "trunk", "primary", "secondary", "tertiary"]);
 
-function pointInRing(x: number, y: number, r: ArrayLike<number>) {
+export function pointInRing(x: number, y: number, r: ArrayLike<number>) {
   let inside = false;
   for (let i = 0, j = r.length - 2; i < r.length; j = i, i += 2) {
     const xi = r[i], yi = r[i + 1], xj = r[j], yj = r[j + 1];

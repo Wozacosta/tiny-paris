@@ -367,6 +367,34 @@ h1 {
   border-bottom: 1px solid var(--rule);
 }
 
+#search {
+  display: block;
+  width: calc(100% - 16px);
+  margin: 8px 8px 0;
+  padding: 6px 10px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  /* Below 16px, iPhones zoom the page in on focus. */
+  font: 500 16px Barlow, sans-serif;
+  color: var(--ink);
+  background: #fff;
+}
+
+#search:focus {
+  outline: 2px solid var(--jade);
+  outline-offset: -1px;
+}
+
+.places li.none {
+  padding: 3px 8px 3px 34px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.places li.none::before {
+  display: none;
+}
+
 .places ul {
   list-style: none;
   margin: 0;

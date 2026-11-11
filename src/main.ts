@@ -1,5 +1,6 @@
 import { inject } from "@vercel/analytics";
-import { loadFrame, loadTransit, loadWorld, type Building, type MapFrame, type World } from "./model";
+import { loadFrame, loadTransit, loadWorld, pointInRing, type Building, type MapFrame, type World } from "./model";
+import { findAddresses, fold, queryWords, rank, type Address } from "./search";
 import { LANDMARKS, TOP, slug, type Landmark } from "./landmarks";
 import { buildRotView, drawGround, drawHighlight, drawSlab, drawStructures, isoToWorld, occluders, pick, worldToIso, type Camera, type Rotation, type RotView } from "./render";
 import { DAY, type Theme } from "./theme";
@@ -448,7 +449,8 @@ function togglePainted() {
   requestRender(); // the vector map underneath is drawn differently with and without it
 }
 
-function showInfo(i: number | null) {
+/** Opens a building's card; `addr` is the address searched for, for buildings the map has none for. */
+function showInfo(i: number | null, addr?: string) {
   state.selected = i;
   const card = $("info");
   if (i == null) {
@@ -462,7 +464,7 @@ function showInfo(i: number | null) {
   $("info-title").textContent = t.name ?? KIND_LABEL[kind] ?? kind.replace(/_/g, " ");
   const rows: [string, string | HTMLElement][] = [];
   if (t.name) rows.push(["Type", KIND_LABEL[kind] ?? kind.replace(/_/g, " ")]);
-  if (t.addr) rows.push(["Address", t.addr]);
+  if (t.addr || addr) rows.push(["Address", t.addr ?? addr!]);
   // A tagged height first: some landmarks are drawn flat for the painter (the Eiffel Tower, the Grande Arche).
   const tagged = parseFloat(t.height ?? "");
   rows.push(["Height", `${Math.round(tagged || b.top)} m${t.height || t["building:levels"] ? "" : " (guessed)"}`]);
@@ -623,6 +625,8 @@ function setupInput() {
 
   addEventListener("keydown", (e) => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
+    // Typing in the search or the report form isn't a shortcut.
+    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
     const k = e.key.toLowerCase();
     if (k === "+" || k === "=") glideZoom(1.4);
     else if (k === "-" || k === "_") glideZoom(1 / 1.4);
@@ -671,6 +675,8 @@ function togglePlaces(open: boolean) {
   $("places").classList.toggle("open", open);
   $("places-body").hidden = !open;
   $("places-toggle").setAttribute("aria-expanded", String(open));
+  // Straight into the search box, except on touch screens, where it would pop the keyboard up over the list.
+  if (open && matchMedia("(pointer: fine)").matches) $("search").focus();
 }
 
 function goTo(l: Landmark) {
@@ -682,17 +688,130 @@ function goTo(l: Landmark) {
   for (const b of document.querySelectorAll(".line-track button")) b.toggleAttribute("aria-current", b.getAttribute("data-name") === l.name);
 }
 
-function setupLandmarks() {
-  $("places-toggle").onclick = () => togglePlaces(!$("places").classList.contains("open"));
+/** Flies to a building and opens its card. */
+function goToBuilding(i: number) {
+  const b = world.buildings[i];
+  follow(null);
+  togglePlaces(false);
+  flyToWorld(b.cx, b.cy, 4, b.h / 2);
+  showInfo(i);
+}
+
+/** Flies to an address, and opens the card of the building it's in, if any. */
+function goToAddress(a: Address) {
+  const [x, y] = frame0.project(a.lon, a.lat);
+  follow(null);
+  togglePlaces(false);
+  const i = ready ? world.buildings.findIndex((b) => Math.abs(b.cx - x) < 150 && Math.abs(b.cy - y) < 150 && pointInRing(x, y, b.rings[0])) : -1;
+  flyToWorld(x, y, a.zoom, i >= 0 ? world.buildings[i].h / 2 : 0);
+  showInfo(i >= 0 ? i : null, a.house ? a.label : undefined);
+}
+
+interface Hit {
+  label: string;
+  note: string;
+  go: () => void;
+}
+
+/** The buildings with a name or an address, folded for search; built on the first search after the city loads. */
+let named: { i: number; text: string }[] | null = null;
+
+function searchMap(words: string[]): Hit[] {
+  const landmarks = LANDMARKS.map((l) => ({ l, r: rank(fold(l.name), words) })).filter((h) => h.r != null).sort((a, b) => a.r! - b.r!);
+  const hits: Hit[] = landmarks.map(({ l }) => ({ label: l.name, note: l.note, go: () => goTo(l) }));
+  if (!ready) return hits;
+  named ??= world.buildings.flatMap((b, i) => (b.info?.name || b.info?.addr ? [{ i, text: fold(`${b.info.name ?? ""} ${b.info.addr ?? ""}`) }] : []));
+  const shown = new Set(landmarks.map(({ l }) => fold(l.name)));
+  const buildings = named.map((n) => ({ i: n.i, r: rank(n.text, words) })).filter((h) => h.r != null).sort((a, b) => a.r! - b.r!);
+  for (const { i } of buildings) {
+    const t = world.buildings[i].info!;
+    const label = t.name ?? t.addr!;
+    if (shown.has(fold(label))) continue;
+    shown.add(fold(label));
+    hits.push({ label, note: (t.name && t.addr) || (KIND_LABEL[t.building ?? "yes"] ?? ""), go: () => goToBuilding(i) });
+    if (hits.length >= 12) break;
+  }
+  return hits;
+}
+
+/** Fills the Go to list: every landmark, or what matches the search. */
+function showHits(hits: Hit[] | null, searching = false) {
   const ul = $("landmarks");
-  for (const l of LANDMARKS) {
+  const items = (hits ?? LANDMARKS.map((l) => ({ label: l.name, note: l.note, go: () => goTo(l) }))).map((h) => {
     const li = document.createElement("li");
     const btn = document.createElement("button");
-    btn.innerHTML = `${l.name} <small>${l.note}</small>`;
-    btn.onclick = () => goTo(l);
+    const note = document.createElement("small");
+    note.textContent = h.note;
+    btn.append(h.label, " ", note);
+    btn.onclick = h.go;
     li.append(btn);
-    ul.append(li);
+    return li;
+  });
+  if (!items.length) {
+    const li = document.createElement("li");
+    li.className = "none";
+    li.textContent = searching ? "Searching…" : ready ? "Nothing here by that name" : "Still loading the city…";
+    items.push(li);
   }
+  ul.replaceChildren(...items);
+}
+
+function setupSearch() {
+  const input = $<HTMLInputElement>("search");
+  let asked: AbortController | null = null;
+  let timer = 0;
+  const update = () => {
+    const q = input.value.trim(), words = queryWords(q);
+    asked?.abort();
+    clearTimeout(timer);
+    if (!words.length) return showHits(null);
+    const local = searchMap(words);
+    // Addresses need a few letters, and a pause in the typing.
+    const lookUp = q.length >= 3;
+    showHits(local, lookUp);
+    if (!lookUp) return;
+    const ask = (asked = new AbortController());
+    timer = setTimeout(async () => {
+      const near = frame0.unproject(...isoToWorld(rotation, cam.cx, cam.cy));
+      const found = await findAddresses(q, near, ask.signal).catch(() => []);
+      if (ask.signal.aborted) return;
+      const shown = new Set(local.map((h) => fold(h.label)));
+      const addresses = found.filter((a) => {
+        const [x, y] = frame0.project(a.lon, a.lat);
+        if (!pointInRing(x, y, frame0.boundary) || shown.has(fold(a.label))) return false;
+        shown.add(fold(a.label));
+        return true;
+      });
+      showHits([...local.slice(0, addresses.length ? 8 : 12), ...addresses.map((a) => ({ label: a.label, note: a.note, go: () => goToAddress(a) }))]);
+    }, 250);
+  };
+  input.addEventListener("input", update);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") ($("landmarks").querySelector("button") as HTMLButtonElement | null)?.click();
+    else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      ($("landmarks").querySelector("button") as HTMLButtonElement | null)?.focus();
+    } else if (e.key === "Escape") {
+      if (input.value) {
+        input.value = "";
+        update();
+      } else togglePlaces(false);
+    }
+  });
+  // Up and down through the results; up from the first goes back to the box.
+  $("landmarks").addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    e.preventDefault();
+    const buttons = [...$("landmarks").querySelectorAll("button")];
+    const at = buttons.indexOf(document.activeElement as HTMLButtonElement) + (e.key === "ArrowDown" ? 1 : -1);
+    (at < 0 ? input : buttons[Math.min(at, buttons.length - 1)]).focus();
+  });
+}
+
+function setupLandmarks() {
+  $("places-toggle").onclick = () => togglePlaces(!$("places").classList.contains("open"));
+  showHits(null);
+  setupSearch();
   setupLine();
 }
 
@@ -791,6 +910,8 @@ async function main() {
     `${fmt(world.buildings.length)} buildings · ${fmt(n.cars)} cars · ${fmt(n.buses)} buses on ${n.lines} RATP lines · ` +
     `${fmt(n.bikes)} bikes · ${fmt(n.stations)} Vélib' stations · ${n.trucks} garbage trucks · ${n.trains} métros`;
   ready = true;
+  // A search typed while the city loaded can now find its buildings.
+  if ($<HTMLInputElement>("search").value) $("search").dispatchEvent(new Event("input"));
   requestRender();
   requestAnimationFrame(tick);
   showLoading(null);

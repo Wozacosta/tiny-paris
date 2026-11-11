@@ -8,7 +8,7 @@
     "preview": "vite preview",
     "typecheck": "tsc && tsc -p api",
     "test": "vitest run",
-    "test:e2e": "playwright test",
+    "test:e2e": "vite build && playwright test",
     "data": "node scripts/fetch-osm.mjs",
     "paint:base": "node scripts/paint/1-base.mjs",
     "paint": "node scripts/paint/2-paint.mjs",
