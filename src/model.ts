@@ -197,6 +197,55 @@ export function makeLane(flat: Float64Array, half: number, major: boolean, kind:
   return { pts: flat, zs, cum, len: cum[n - 1], half, major, kind, a: key(0), b: key(n - 1) };
 }
 
+/** A stretch longer than this between a viaduct and a tunnel really is at street level. */
+const RAMP_MAX = 400;
+/** Track depth at a tunnel mouth, where a ramp ends: just below the open trench. */
+const MOUTH = -5;
+
+/**
+ * Heights with the ramps put in. Where a line comes off a viaduct and dives
+ * into a tunnel, OSM tags neither the stretch between (an embankment, then a
+ * trench), which would leave the track flat at street level; slope it
+ * evenly from the viaduct down to the tunnel mouth instead. Lines are split
+ * into several ways, so the viaduct or tunnel may be in the next one.
+ * Line 1's bridges (the Arsenal basin, the Pont de Neuilly) are at street
+ * level, not viaducts: it goes straight from them into its tunnels.
+ */
+export function rampHeights(metro: { line: string; p: ArrayLike<number>; z: number[] }[], k: number): number[][] {
+  // Every bridge and tunnel vertex, for the way that carries on from a run's end: the nearest within 10 m.
+  const tagged: [number, number, number][] = [];
+  for (const m of metro) if (m.line !== "1") m.z.forEach((z, i) => z && tagged.push([m.p[i * 2] / k, m.p[i * 2 + 1] / k, z]));
+  const next = (p: ArrayLike<number>, i: number) => {
+    let best: number | undefined, d0 = 10;
+    for (const [x, y, z] of tagged) {
+      const d = Math.hypot(x - p[i * 2] / k, y - p[i * 2 + 1] / k);
+      if (d < d0) [best, d0] = [z, d];
+    }
+    return best;
+  };
+  return metro.map((m) => {
+    const z = [...m.z], n = z.length;
+    if (m.line === "1") return z;
+    const cum = [0];
+    for (let i = 1; i < n; i++) cum.push(cum[i - 1] + Math.hypot(m.p[i * 2] - m.p[i * 2 - 2], m.p[i * 2 + 1] - m.p[i * 2 - 1]) / k);
+    for (let a = 0; a < n; a++) {
+      if (z[a]) continue;
+      let b = a;
+      while (b + 1 < n && !z[b + 1]) b++;
+      // The ends of the flat run: the vertex before and after it, or the
+      // run's own end vertex if another way carries on from there.
+      const lo = a > 0 ? a - 1 : a, hi = b < n - 1 ? b + 1 : b;
+      const zl = a > 0 ? z[a - 1] : next(m.p, a), zh = b < n - 1 ? z[b + 1] : next(m.p, b);
+      if (zl && zh && zl * zh < 0 && cum[hi] - cum[lo] < RAMP_MAX) {
+        const from = Math.max(zl, MOUTH), to = Math.max(zh, MOUTH);
+        for (let i = lo; i <= hi; i++) z[i] = from + ((to - from) * (cum[i] - cum[lo])) / (cum[hi] - cum[lo]);
+      }
+      a = b;
+    }
+    return z;
+  });
+}
+
 /** Ramps between tunnel, ground and viaduct heights over ~60 m. */
 function smoothHeights(flat: Float64Array, zs: number[]) {
   const lane = makeLane(flat, 0, false, "metro");
@@ -271,6 +320,8 @@ const MONUMENT_KINDS = new Set([
 /** Landmarks whose data would mislead the classifier. */
 const STYLE_OVERRIDES: Record<string, { style: Style; roof: RoofKind }> = {
   "Gare du Nord": { style: "stone", roof: "glass" },
+  // Niemeyer's 1971 glass curtain wall and white dome; undated in BD TOPO, so it would be stone.
+  "Siège du Parti communiste français": { style: "modern", roof: "flat" },
   // The 1863 iron-and-glass market hall; BD TOPO dates it to its 2014 restoration.
   "Carreau du Temple": { style: "stone", roof: "glass" },
   "Cité des Sciences et de l'Industrie": { style: "recent", roof: "glass" },
@@ -748,9 +799,10 @@ export async function loadWorld(url: string, onProgress?: (f: number) => void): 
     for (const e of [lane.a, lane.b]) walkJunctions.set(e, [...(walkJunctions.get(e) ?? []), id]);
   }
   const greens = raw.parks.flatMap((p) => p.r.slice(0, 1).map((ring) => ({ kind: p.k, ring: Float64Array.from(ring, (v) => v / k) })));
-  const metro = (raw.metro ?? []).map((m) => {
+  const ramps = rampHeights(raw.metro ?? [], k);
+  const metro = (raw.metro ?? []).map((m, i) => {
     const flat = Float64Array.from(m.p, (v) => v / k);
-    return makeLane(flat, 0, true, "metro", smoothHeights(flat, m.z));
+    return makeLane(flat, 0, true, "metro", smoothHeights(flat, ramps[i]));
   });
 
   const trees = Float64Array.from(raw.trees, (v) => v / k);
