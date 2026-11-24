@@ -28,4 +28,11 @@ npm run build && npm run test:e2e   # smoke tests in Chrome (Playwright), deskto
 GitHub Actions runs all of them on every push and pull request
 (`.github/workflows/ci.yml`).
 
-Map data © OpenStreetMap contributors, ODbL.
+## License
+
+The code is under the [MIT License](LICENSE).
+
+Map data © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors,
+ODbL. Building data, aerial photos, LiDAR and the address search © IGN
+([BD TOPO](https://geoservices.ign.fr/bdtopo), Géoplateforme), Licence Ouverte
+Etalab 2.0. 3D models by [Kenney](https://kenney.nl), CC0.
