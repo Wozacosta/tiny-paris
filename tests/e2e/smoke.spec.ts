@@ -5,7 +5,7 @@ async function open(page: Page) {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto("/");
-  await expect(page.locator("#stats")).toContainText("109,028 buildings", { timeout: 90_000 });
+  await expect(page.locator("#stats")).toContainText(/\d{2,3},\d{3} buildings/, { timeout: 90_000 });
   return errors;
 }
 

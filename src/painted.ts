@@ -19,7 +19,9 @@ const KEEP = 64;
 export class PaintedLayer {
   // Chunks are decoded off the main thread (createImageBitmap) before they are
   // drawn: an <img> decodes on its first draw, which stalls zooming.
-  private chunks = new Map<string, ImageBitmap | "loading">();
+  private chunks = new Map<string, ImageBitmap | "loading" | "failed">();
+  /** Failed fetches per chunk, for waiting longer before each retry. */
+  private tries = new Map<string, number>();
   private used = new Map<string, number>();
   private frame = 0;
 
@@ -43,18 +45,32 @@ export class PaintedLayer {
       if (peek) return null;
       this.chunks.set(key, "loading");
       fetch(`/painted/${key}.webp`)
-        .then((res) => res.blob())
+        .then((res) => {
+          if (!res.ok) throw new Error(`${key}: ${res.status}`);
+          return res.blob();
+        })
         .then((blob) => createImageBitmap(blob))
         .then((bitmap) => {
+          this.tries.delete(key);
           this.chunks.set(key, bitmap);
           this.used.set(key, this.frame);
           this.evict();
           this.onLoad();
         })
-        .catch(() => this.chunks.delete(key));
+        .catch(() => {
+          // Offline or a bad chunk: wait before asking again (2 s, 4 s, … 30 s),
+          // or every redraw, 60 a second, would fetch it anew.
+          const n = (this.tries.get(key) ?? 0) + 1;
+          this.tries.set(key, n);
+          this.chunks.set(key, "failed");
+          setTimeout(() => {
+            this.chunks.delete(key);
+            this.onLoad();
+          }, Math.min(30_000, 1000 * 2 ** n));
+        });
       return null;
     }
-    if (got === "loading") return null;
+    if (typeof got === "string") return null;
     this.used.set(key, this.frame);
     return got;
   }
@@ -73,7 +89,7 @@ export class PaintedLayer {
     for (let n = this.used.size - KEEP, i = 0; n > 0 && i < loaded.length; n--, i++) {
       const [key] = loaded[i];
       const b = this.chunks.get(key);
-      if (b && b !== "loading") b.close();
+      if (b && typeof b !== "string") b.close();
       this.chunks.delete(key);
       this.used.delete(key);
     }
