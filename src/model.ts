@@ -60,6 +60,61 @@ export interface Lane {
   /** Endpoint keys, for hopping to the next lane at a junction. */
   a: string;
   b: string;
+  /** One-way: 1 along the points' order, -1 against it. */
+  oneway?: 1 | -1;
+  /** The street's name, where it has one. */
+  name?: string;
+  /** Distances along it where its vehicles stop: bus stops on a bus line, stations on a métro track. */
+  stops?: Float64Array;
+  /** Traffic lights, as [distance along, phase offset in seconds, 1 if it runs more north-south than east-west] each. */
+  lights?: Float64Array;
+}
+
+/** What scripts/fetch-streets.mjs adds to the streets: public/data/paris-streets.json. */
+export interface Streets {
+  /** How many roads the city file had when this was written: it refers to them by index. */
+  roads: number;
+  oneway: number[];
+  onewayBack: number[];
+  names: string[];
+  /** Pairs: road index, index into `names`. */
+  named: number[];
+  /** Flat [x, y, ...] in world units (×scale), like every point of the city file. */
+  signals: number[];
+  busStops: number[];
+  metroStops: number[];
+}
+
+/** A set of points in world units (×scale), for asking whether a line's vertex is one of them. */
+export function pointSet(flat: number[]) {
+  const key = (x: number, y: number) => (Math.round(x) + 2 ** 25) * 2 ** 26 + Math.round(y) + 2 ** 25;
+  const set = new Set<number>();
+  for (let i = 0; i < flat.length; i += 2) set.add(key(flat[i], flat[i + 1]));
+  return (x: number, y: number) => set.has(key(x, y));
+}
+
+/** A traffic light's cycle, in seconds: half of it green for each of the two streets that cross. */
+export const LIGHT_CYCLE = 44;
+
+/**
+ * Marks on a lane the vertices that are stops and traffic lights. `p` is the
+ * lane's line in world units (×k), which is what the point sets are in.
+ */
+export function markLane(lane: Lane, p: ArrayLike<number>, isStop: ((x: number, y: number) => boolean) | null, isLight: ((x: number, y: number) => boolean) | null) {
+  const stops: number[] = [], lights: number[] = [];
+  const n = p.length / 2;
+  for (let i = 0; i < n; i++) {
+    const x = p[i * 2], y = p[i * 2 + 1];
+    // Stops closer than 120 m are the same one, mapped once per direction or per line.
+    if (isStop?.(x, y) && (!stops.length || lane.cum[i] - stops[stops.length - 1] > 120)) stops.push(lane.cum[i]);
+    if (isLight?.(x, y)) {
+      const a = Math.max(0, i - 1), b = Math.min(n - 1, i + 1);
+      const phase = hash(x * 0.013, y * 0.017) * LIGHT_CYCLE;
+      lights.push(lane.cum[i], phase, Math.abs(p[b * 2 + 1] - p[a * 2 + 1]) > Math.abs(p[b * 2] - p[a * 2]) ? 1 : 0);
+    }
+  }
+  if (stops.length) lane.stops = Float64Array.from(stops);
+  if (lights.length) lane.lights = Float64Array.from(lights);
 }
 
 export interface Building {
@@ -366,12 +421,11 @@ function classify(bd: BdRow | undefined, kind: string, h: number, area: number, 
   return { style, roof };
 }
 
-/** Finds, for each building, the BD TOPO record whose centroid lies inside it (tallest wins). */
 /**
  * Yields to the browser after about 25 ms of work, so the painted map keeps
  * panning, zooming and drawing while the city is built behind it.
  */
-function pacer() {
+export function pacer() {
   let since = performance.now();
   return async () => {
     if (performance.now() - since < 25) return;
@@ -403,7 +457,7 @@ export function matchBdTopo(rows: BdRow[], rings: ArrayLike<number>[][], k: numb
       for (let gy = Math.floor(y0 / CELL); gy <= Math.floor(y1 / CELL); gy++) {
         for (const r of grid.get(`${gx},${gy}`) ?? []) {
           const px = r[0] / k, py = r[1] / k;
-          if (px < x0 || px > x1 || py < y0 || py > y1 || !inRing(px, py, o)) continue;
+          if (px < x0 || px > x1 || py < y0 || py > y1 || !pointInRing(px, py, o)) continue;
           if (!best || r[2] > best[2]) best = r;
         }
       }
@@ -411,15 +465,6 @@ export function matchBdTopo(rows: BdRow[], rings: ArrayLike<number>[][], k: numb
     out.push(best);
   }
   return out;
-}
-
-function inRing(x: number, y: number, r: ArrayLike<number>) {
-  let inside = false;
-  for (let i = 0, j = r.length - 2; i < r.length; j = i, i += 2) {
-    const xi = r[i], yi = r[i + 1], xj = r[j], yj = r[j + 1];
-    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
-  }
-  return inside;
 }
 
 /**
@@ -544,10 +589,20 @@ async function fetchBytes(url: string, expected: number, onProgress?: (f: number
 
 /** Reads public/data/paris.bin, written by scripts/pack.mjs in this same order. */
 export function unpack(buf: ArrayBuffer): Raw {
+  const steps = unpackSteps(buf);
+  for (;;) {
+    const step = steps.next();
+    if (step.done) return step.value;
+  }
+}
+
+/** unpack in steps: each `yield` is a chance to hand the page back. */
+function* unpackSteps(buf: ArrayBuffer): Generator<void, Raw> {
   const head = new DataView(buf);
   if (new TextDecoder().decode(new Uint8Array(buf, 0, 4)) !== "TPB1") throw new Error("not a Tiny Paris data file");
   const len = head.getUint32(4, true);
   const h = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 8, len)));
+  yield;
   let ints = new Int32Array(buf, 8 + len);
   let at = 0;
   // Each line is its length, then its first point and the steps after it:
@@ -561,18 +616,25 @@ export function unpack(buf: ArrayBuffer): Raw {
   const rings = () => Array.from({ length: ints[at++] }, line);
   const times = <T>(n: number, f: (i: number) => T) => Array.from({ length: n }, (_, i) => f(i));
   const c = h.counts;
-  const buildings: RawBuilding[] = times(c.buildings, (i) => ({ r: rings(), h: h.heights[i] ?? undefined, i: h.info[i] ?? undefined }));
+  const buildings: RawBuilding[] = [];
+  for (let i = 0; i < c.buildings; i++) {
+    buildings.push({ r: rings(), h: h.heights[i] ?? undefined, i: h.info[i] ?? undefined });
+    if (i % 4096 === 4095) yield;
+  }
   // The rest gets its own, smaller buffer: the map's ground may be drawn later
   // from it, and that shouldn't keep the buildings' 13 MB alive.
   ints = ints.slice(at);
   at = 0;
+  yield;
   const water = times(c.water, rings);
   const parks = times(c.parks, () => ({ k: h.parkKinds[ints[at++]] as string, r: rings() }));
   const bridges = times(c.bridges, rings);
+  yield;
   const roads = times(c.roads, () => {
     const k: string = h.roadKinds[ints[at++]], w: number = h.roadWidths[ints[at++]];
     return { k, w, p: line() };
   });
+  yield;
   const trees = line();
   const through = new Uint8Array(c.roads);
   for (const i of h.through as number[]) through[i] = 1;
@@ -650,8 +712,24 @@ function groundPaths(src: GroundSource, buildings: Building[], trees: Float64Arr
   };
 }
 
-export async function loadWorld(url: string, onProgress?: (f: number) => void): Promise<World> {
-  const raw = unpack(await fetchBytes(url, 25.6e6, onProgress));
+export async function loadWorld(url: string, onProgress?: (f: number) => void, extra?: Streets | null): Promise<World> {
+  const pace = pacer();
+  const steps = unpackSteps(await fetchBytes(url, 25.6e6, onProgress));
+  let step = steps.next();
+  while (!step.done) {
+    await pace();
+    step = steps.next();
+  }
+  const raw = step.value;
+  // Only if it was made from this very city file: it names roads by their index.
+  const st = extra && extra.roads === raw.roads.length ? extra : null;
+  const oneway = new Int8Array(raw.roads.length);
+  for (const i of st?.oneway ?? []) oneway[i] = 1;
+  for (const i of st?.onewayBack ?? []) oneway[i] = -1;
+  const nameOf = new Map<number, string>();
+  for (let i = 0; st && i < st.named.length; i += 2) nameOf.set(st.named[i], st.names[st.named[i + 1]]);
+  const isLight = st ? pointSet(st.signals) : null;
+  const isStation = st ? pointSet(st.metroStops) : null;
   // Let the page show "building" before the long synchronous work below.
   onProgress?.(1);
   await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
@@ -664,7 +742,6 @@ export async function loadWorld(url: string, onProgress?: (f: number) => void): 
   const project = (lon: number, lat: number): [number, number] => [(lon - lon0) * kx, -(lat - lat0) * ky];
   const unproject = (x: number, y: number): [number, number] => [lon0 + x / kx, lat0 - y / ky];
 
-  const pace = pacer();
   // Every building ring as a view into one array, not 350,000 little ones.
   let total = 0;
   for (const b of raw.buildings) for (const r of b.r) total += r.length;
@@ -776,6 +853,9 @@ export async function loadWorld(url: string, onProgress?: (f: number) => void): 
     if (inGraveyard(flat)) continue;
     const lane = makeLane(flat, r.w / 2, MAJOR.has(r.k), r.k);
     if (lane.len < 1) continue;
+    if (oneway[ri]) lane.oneway = oneway[ri] as 1 | -1;
+    lane.name = nameOf.get(ri);
+    if (r.k !== "cycleway") markLane(lane, r.p, null, isLight);
     const id = streets.push(lane) - 1;
     for (const e of [lane.a, lane.b]) junctions.set(e, [...(junctions.get(e) ?? []), id]);
   }
@@ -791,6 +871,7 @@ export async function loadWorld(url: string, onProgress?: (f: number) => void): 
     if (walk && raw.through[ri]) continue;
     const lane = makeLane(flat, r.w / 2, false, r.k);
     if (lane.len < 2) continue;
+    lane.name = nameOf.get(ri);
     if (!walk) {
       rails.push(lane);
       continue;
@@ -802,7 +883,9 @@ export async function loadWorld(url: string, onProgress?: (f: number) => void): 
   const ramps = rampHeights(raw.metro ?? [], k);
   const metro = (raw.metro ?? []).map((m, i) => {
     const flat = Float64Array.from(m.p, (v) => v / k);
-    return makeLane(flat, 0, true, "metro", smoothHeights(flat, ramps[i]));
+    const lane = makeLane(flat, 0, true, "metro", smoothHeights(flat, ramps[i]));
+    markLane(lane, m.p, isStation, null);
+    return lane;
   });
 
   const trees = Float64Array.from(raw.trees, (v) => v / k);
@@ -863,8 +946,15 @@ export interface Transit {
   cafes?: [number, number, number, number][];
 }
 
+/** One-way streets, street names, traffic lights and stops, from scripts/fetch-streets.mjs; null if missing. */
+export async function loadStreets(url: string): Promise<Streets | null> {
+  const res = await fetch(url).catch(() => null);
+  if (!res?.ok || !res.headers.get("content-type")?.includes("json")) return null;
+  return res.json();
+}
+
 /** Bus lines and Vélib' stations from scripts/fetch-transit.mjs; empty if missing. */
-export async function loadTransit(url: string): Promise<Transit> {
+export async function loadTransit(url: string, extra?: Streets | null): Promise<Transit> {
   const res = await fetch(url);
   if (!res.ok || !res.headers.get("content-type")?.includes("json")) return { lines: [], velib: [], waterways: [], squares: [] };
   const raw: {
@@ -876,6 +966,8 @@ export async function loadTransit(url: string): Promise<Transit> {
   } = await res.json();
   const k = 10;
   const same = (a: number[], b: number[]) => Math.hypot(a[0] - b[0], a[1] - b[1]) < 30; // 3 m, in decimetres
+  const isBusStop = extra ? pointSet(extra.busStops) : null;
+  const isLight = extra ? pointSet(extra.signals) : null;
 
   const lines = raw.lines.map((l) => {
     // Chain the route's ways in member order, flipping each to meet the last.
@@ -903,7 +995,12 @@ export async function loadTransit(url: string): Promise<Transit> {
     }
     if (cur.length) chains.push(cur);
     const segs = chains
-      .map((c) => makeLane(Float64Array.from(c.flat(), (v) => v / k), 4, true, "bus"))
+      .map((c) => {
+        const p = c.flat();
+        const lane = makeLane(Float64Array.from(p, (v) => v / k), 4, true, "bus");
+        markLane(lane, p, isBusStop, isLight);
+        return lane;
+      })
       .filter((lane) => lane.len > 80);
     return { ref: l.ref, colour: l.colour, night: l.night, segs };
   }).filter((l) => l.segs.length);

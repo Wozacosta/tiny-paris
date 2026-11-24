@@ -2,9 +2,9 @@
 // picnics on the lawns, and RER and mainline trains in and out of Gare du Nord
 // and Gare de l'Est. Collected into the same depth-sorted pass as traffic.
 
-import { makeLane, type Lane, type Transit, type World } from "./model";
+import { makeLane, pointInRing, type Lane, type Transit, type World } from "./model";
 import { depthOf, worldToIso, type Rotation } from "./render";
-import { box, dot, person, sample, SHIRTS, SKINS } from "./shapes";
+import { box, boxInView, dot, laneBoxes, person, sample, SHIRTS, SKINS, type Box } from "./shapes";
 import type { Sprites } from "./sprites";
 import type { Theme } from "./theme";
 import type { Item } from "./life";
@@ -73,15 +73,6 @@ function rng(seed: number) {
   return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
 }
 
-function inRing(x: number, y: number, r: Float64Array) {
-  let inside = false;
-  for (let i = 0, j = r.length - 2; i < r.length; j = i, i += 2) {
-    const xi = r[i], yi = r[i + 1], xj = r[j], yj = r[j + 1];
-    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
-  }
-  return inside;
-}
-
 function ringArea(r: Float64Array) {
   let a = 0;
   for (let i = 0, j = r.length - 2; i < r.length; j = i, i += 2) a += r[j] * r[i + 1] - r[i] * r[j + 1];
@@ -91,8 +82,16 @@ function ringArea(r: Float64Array) {
 export class StreetLife {
   private walkers: Walker[] = [];
   private slice = 0;
-  /** Per walk lane: midpoint and half-length, to skip whole lanes out of view. */
-  private laneMid: Float64Array;
+  /** Each path's bounding box, to skip the walkers on paths far from the view. */
+  private walkBox = new Float32Array(0);
+  /**
+   * The walkers within a few streets of the view, and the box they were picked
+   * in: of 60,000 people, only these walk and are looked at each frame. Picked
+   * again when the view leaves the box, and every few seconds, as they wander.
+   */
+  private active: Walker[] = [];
+  private activeBox: Box | null = null;
+  private activeAt = 0;
   private terraces: Terrace[] = [];
   private picnics: Picnic[] = [];
   private trains: Train[] = [];
@@ -100,21 +99,24 @@ export class StreetLife {
   private sprites: Sprites | null = null;
   private useSprites = false;
 
-  constructor(private world: World, transit: Transit) {
-    const rand = rng(2026);
-    const { walks } = world;
+  constructor(private world: World) {}
 
-    this.laneMid = new Float64Array(walks.length * 3);
-    walks.forEach((l, i) => {
-      const p = sample(l, l.len / 2);
-      this.laneMid.set([p.x, p.y, l.len / 2], i * 3);
-    });
+  /**
+   * Puts everyone in place. In slices (`pace` hands the page back every 25 ms
+   * or so): done in one go it froze the map for most of a second on a phone.
+   */
+  async build(transit: Transit, pace: () => Promise<void>) {
+    const rand = rng(2026);
+    const { walks } = this.world;
+
+    this.walkBox = laneBoxes(walks);
 
     // Walkers spread over the network in proportion to path length.
     const cum = new Float64Array(walks.length);
     walks.forEach((l, i) => (cum[i] = (i ? cum[i - 1] : 0) + l.len));
     const total = cum[cum.length - 1] ?? 0;
     for (let k = 0; total && k < WALKERS; k++) {
+      if (k % 4096 === 0) await pace();
       const t = rand() * total;
       let lo = 0, hi = cum.length - 1;
       while (lo < hi) {
@@ -130,8 +132,10 @@ export class StreetLife {
       });
     }
 
-    this.buildTerraces(transit, rand);
+    await this.buildTerraces(transit, rand, pace);
+    await pace();
     this.buildPicnics(rand);
+    await pace();
     this.buildTrains(rand);
   }
 
@@ -140,13 +144,15 @@ export class StreetLife {
   }
 
   /** Terraces on the sidewalk in front of cafés and bars, facing the street. */
-  private buildTerraces(transit: Transit, rand: () => number) {
+  private async buildTerraces(transit: Transit, rand: () => number, pace: () => Promise<void>) {
     const cafes = transit.cafes ?? [];
     if (!cafes.length) return;
     // Street points every 3 m, bucketed in a 20 m grid.
     const C = 20;
     const grid = new Map<string, [number, number, number, number, number][]>();
+    let done = 0;
     for (const l of this.world.streets) {
+      if (++done % 512 === 0) await pace();
       if (l.kind === "cycleway" || l.kind === "service") continue;
       for (let s = 0; s <= l.len; s += 3) {
         const p = sample(l, s);
@@ -157,6 +163,7 @@ export class StreetLife {
       }
     }
     for (const [x, y, kind, outdoor] of cafes) {
+      if (++done % 512 === 0) await pace();
       if (outdoor < 0) continue;
       if (rand() > (outdoor > 0 ? 1 : kind === 2 ? 0.35 : 0.75)) continue;
       let best: [number, number, number, number, number] | null = null, bd = 25;
@@ -206,7 +213,7 @@ export class StreetLife {
       const n = Math.min(60, Math.round(area / 1500));
       for (let k = 0, tries = 0; k < n && tries < n * 20; tries++) {
         const x = x0 + rand() * (x1 - x0), y = y0 + rand() * (y1 - y0);
-        if (!inRing(x, y, g.ring)) continue;
+        if (!pointInRing(x, y, g.ring)) continue;
         k++;
         const a = rand() * Math.PI * 2, tx = Math.cos(a), ty = Math.sin(a);
         const m = 2 + Math.floor(rand() * 4);
@@ -307,8 +314,8 @@ export class StreetLife {
     const { walks, walkJunctions } = this.world;
     // A quarter of them per frame, each moving four frames' worth.
     const part = this.slice++ % 4;
-    for (let i = part; zoom >= PEOPLE_ZOOM && i < this.walkers.length; i += 4) {
-      const w = this.walkers[i];
+    for (let i = part; zoom >= PEOPLE_ZOOM && i < this.active.length; i += 4) {
+      const w = this.active[i];
       w.s += w.dir * w.speed * dt * 4;
       const l = walks[w.lane];
       if (w.s >= 0 && w.s <= l.len) continue;
@@ -349,7 +356,14 @@ export class StreetLife {
     }
   }
 
-  collect(items: Item[], ctx: CanvasRenderingContext2D, r: Rotation, inView: InView, theme: Theme, cssZoom: number) {
+  collect(items: Item[], ctx: CanvasRenderingContext2D, r: Rotation, inView: InView, theme: Theme, cssZoom: number, wb: Box) {
+    const a = this.activeBox;
+    if (cssZoom >= PEOPLE_ZOOM && (!a || wb[0] < a[0] || wb[1] < a[1] || wb[2] > a[2] || wb[3] > a[3] || this.time - this.activeAt > 5)) {
+      const box: Box = [wb[0] - 200, wb[1] - 200, wb[2] + 200, wb[3] + 200];
+      this.active = this.walkers.filter((w) => boxInView(this.walkBox, w.lane, box));
+      this.activeBox = box;
+      this.activeAt = this.time;
+    }
     this.useSprites = !!this.sprites && cssZoom >= 1.1;
     if (cssZoom >= MOVERS_ZOOM) {
       for (const t of this.trains) {
@@ -366,10 +380,8 @@ export class StreetLife {
     }
     if (cssZoom < PEOPLE_ZOOM) return;
     const { walks } = this.world;
-    const m = this.laneMid;
-    for (const w of this.walkers) {
-      const i = w.lane * 3;
-      if (!inView(m[i], m[i + 1], 0, m[i + 2] + 4)) continue;
+    for (const w of this.active) {
+      if (!boxInView(this.walkBox, w.lane, wb)) continue;
       const p = sample(walks[w.lane], w.s);
       const x = p.x - p.ty * w.side, y = p.y + p.tx * w.side;
       if (!inView(x, y, 0, 4)) continue;

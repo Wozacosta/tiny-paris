@@ -3,9 +3,9 @@
 // Sidewalks, terraces, picnics and mainline trains live in StreetLife.
 // Drawn in the same depth-sorted pass as vehicles (see Traffic.draw).
 
-import { makeLane, type Lane, type Transit, type World } from "./model";
+import { makeLane, pointInRing, type Lane, type Transit, type World } from "./model";
 import { depthOf, worldToIso, type Rotation } from "./render";
-import { box, dot, person, sample, shade, SHIRTS, SKINS } from "./shapes";
+import { box, dot, person, sample, shade, SHIRTS, SKINS, type Box } from "./shapes";
 import type { Sprites } from "./sprites";
 import { MOVERS_ZOOM, PEOPLE_ZOOM, StreetLife } from "./streetlife";
 import type { Theme } from "./theme";
@@ -95,15 +95,6 @@ function northSign(l: Lane) {
   return l.pts.at(-2)! - l.pts[0] > 0 ? 1 : -1;
 }
 
-function inRing(x: number, y: number, r: Float64Array) {
-  let inside = false;
-  for (let i = 0, j = r.length - 2; i < r.length; j = i, i += 2) {
-    const xi = r[i], yi = r[i + 1], xj = r[j], yj = r[j + 1];
-    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
-  }
-  return inside;
-}
-
 export class Life {
   private boats: Boat[] = [];
   private parties: Party[] = [];
@@ -126,8 +117,13 @@ export class Life {
     this.street.setSprites(s);
   }
 
-  constructor(private world: World, transit: Transit) {
-    this.street = new StreetLife(world, transit);
+  /** The street's people take a while to place: see StreetLife.build. */
+  build(pace: () => Promise<void>) {
+    return this.street.build(this.transit, pace);
+  }
+
+  constructor(private world: World, private transit: Transit) {
+    this.street = new StreetLife(world);
     const rand = rng(1900);
     const pick = <T,>(a: T[]) => a[Math.floor(rand() * a.length)];
     const add = (kind: BoatKind, lane: Lane, speed: number) =>
@@ -214,8 +210,8 @@ export class Life {
         // Denser towards the statue: average two uniform draws.
         const x = x0 + ((rand() + rand() + rand()) / 3) * (x1 - x0);
         const y = y0 + ((rand() + rand() + rand()) / 3) * (y1 - y0);
-                if (!inRing(x, y, ring) || Math.hypot(x - sx, y - sy) < 17) continue; // not on the monument's base
-        if (!holes.some((h) => inRing(x, y, h))) return [x, y];
+                if (!pointInRing(x, y, ring) || Math.hypot(x - sx, y - sy) < 17) continue; // not on the monument's base
+        if (!holes.some((h) => pointInRing(x, y, h))) return [x, y];
       }
     };
     for (let i = 0; i < 520; i++) {
@@ -270,9 +266,10 @@ export class Life {
     }
   }
 
-  collect(items: Item[], ctx: CanvasRenderingContext2D, r: Rotation, inView: InView, theme: Theme, cssZoom: number) {
+  /** `wb`: the view on the ground in world metres, for skipping what's far from it cheaply. */
+  collect(items: Item[], ctx: CanvasRenderingContext2D, r: Rotation, inView: InView, theme: Theme, cssZoom: number, wb: Box) {
     this.useSprites = !!this.sprites && cssZoom >= 1.1;
-    this.street.collect(items, ctx, r, inView, theme, cssZoom);
+    this.street.collect(items, ctx, r, inView, theme, cssZoom, wb);
     const onMap = this.world.onMap;
     if (cssZoom >= MOVERS_ZOOM) {
       for (const b of this.boats) {

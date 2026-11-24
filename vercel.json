@@ -1,11 +1,17 @@
 {
   "headers": [
     {
-      "source": "/assets/(.*)",
+      "source": "/(assets|fonts)/(.*)",
       "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }]
     },
     {
-      "source": "/(painted|data|sprites)/(.*)",
+      "source": "/(painted|data|sprites|thumbs)/(.*)",
+      "has": [{ "type": "query", "key": "v" }],
+      "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }]
+    },
+    {
+      "source": "/(painted|data|sprites|thumbs)/(.*)",
+      "missing": [{ "type": "query", "key": "v" }],
       "headers": [{ "key": "Cache-Control", "value": "public, max-age=3600, stale-while-revalidate=86400" }]
     }
   ]

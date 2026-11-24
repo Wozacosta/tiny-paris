@@ -2,6 +2,7 @@
 // view rotation; in that rotation it is drawn over the live map, aligned
 // pixel for pixel, at whichever resolution level suits the current zoom.
 
+import { asset } from "./assets";
 import type { Camera, Rotation } from "./render";
 
 interface Manifest {
@@ -13,8 +14,8 @@ interface Manifest {
   levels: { scale: number; chunks: [number, number][] }[];
 }
 
-/** Decoded chunks kept at most, about 4 MB each. */
-const KEEP = 64;
+/** Decoded chunks kept at most, about 4 MB each: fewer on a phone, whose screen needs fewer and whose memory is short. */
+const KEEP = Math.min(innerWidth, innerHeight) < 600 ? 28 : 64;
 
 export class PaintedLayer {
   // Chunks are decoded off the main thread (createImageBitmap) before they are
@@ -28,7 +29,7 @@ export class PaintedLayer {
   private constructor(private m: Manifest, private onLoad: () => void) {}
 
   static async load(onLoad: () => void): Promise<PaintedLayer | null> {
-    const res = await fetch("/painted/manifest.json");
+    const res = await fetch(asset("/painted/manifest.json"));
     if (!res.ok || !res.headers.get("content-type")?.includes("json")) return null;
     return new PaintedLayer(await res.json(), onLoad);
   }
@@ -44,7 +45,7 @@ export class PaintedLayer {
     if (got === undefined) {
       if (peek) return null;
       this.chunks.set(key, "loading");
-      fetch(`/painted/${key}.webp`)
+      fetch(asset(`/painted/${key}.webp`))
         .then((res) => {
           if (!res.ok) throw new Error(`${key}: ${res.status}`);
           return res.blob();

@@ -2,7 +2,8 @@
 // column per heading and one row per animation frame, drawn with the map's
 // own isometric projection, so they drop straight into iso space.
 
-import { worldToIso, type Rotation } from "./render";
+import { asset } from "./assets";
+import { ROT, worldToIso, type Rotation } from "./render";
 
 interface Meta {
   cellW: number;
@@ -15,13 +16,6 @@ interface Meta {
   frames: number;
 }
 
-// x' = a·x + b·y, y' = c·x + d·y (same table as render.ts).
-const ROT: [number, number, number, number][] = [
-  [1, 0, 0, 1],
-  [0, -1, 1, 0],
-  [-1, 0, 0, -1],
-  [0, 1, -1, 0],
-];
 
 export class Sprites {
   private meta: Record<string, Meta> = {};
@@ -31,7 +25,7 @@ export class Sprites {
 
   static async load(): Promise<Sprites> {
     const s = new Sprites();
-    const res = await fetch("/sprites/sprites.json");
+    const res = await fetch(asset("/sprites/sprites.json"));
     if (res.ok && res.headers.get("content-type")?.includes("json")) s.meta = await res.json();
     return s;
   }
@@ -45,7 +39,7 @@ export class Sprites {
     if (!img) {
       img = new Image();
       img.onload = () => this.shrink(id, img!);
-      img.src = `/sprites/${id}.webp`;
+      img.src = asset(`/sprites/${id}.webp`);
       this.images.set(id, img);
     }
     return img.complete && img.naturalWidth ? img : null;

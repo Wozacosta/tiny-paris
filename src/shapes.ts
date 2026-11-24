@@ -27,6 +27,25 @@ export function sample(lane: Lane, s: number): Sample {
   return { x: x0 + (x1 - x0) * t, y: y0 + (y1 - y0) * t, z, tx: (x1 - x0) / seg, ty: (y1 - y0) / seg };
 }
 
+/** Each lane's bounding box in world metres, flat [x0, y0, x1, y1, …]: a cheap "could it be in view?" before sampling. */
+export function laneBoxes(lanes: Lane[]) {
+  const out = new Float32Array(lanes.length * 4);
+  lanes.forEach((l, i) => {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (let k = 0; k < l.pts.length; k += 2) {
+      x0 = Math.min(x0, l.pts[k]); x1 = Math.max(x1, l.pts[k]);
+      y0 = Math.min(y0, l.pts[k + 1]); y1 = Math.max(y1, l.pts[k + 1]);
+    }
+    out.set([x0 - 1, y0 - 1, x1 + 1, y1 + 1], i * 4);
+  });
+  return out;
+}
+
+export type Box = [number, number, number, number];
+
+/** Whether lane `i`'s box (see laneBoxes) touches the box `v`. */
+export const boxInView = (b: Float32Array, i: number, v: Box) => b[i * 4] <= v[2] && b[i * 4 + 2] >= v[0] && b[i * 4 + 1] <= v[3] && b[i * 4 + 3] >= v[1];
+
 export type Pt = [number, number];
 
 export function hull(points: Pt[]): Pt[] {

@@ -14,7 +14,7 @@ const DEPTH_BAND = 8;
 export type Rotation = 0 | 1 | 2 | 3;
 
 // x' = a·x + b·y, y' = c·x + d·y
-const ROT: [number, number, number, number][] = [
+export const ROT: [number, number, number, number][] = [
   [1, 0, 0, 1],
   [0, -1, 1, 0],
   [-1, 0, 0, -1],
@@ -190,34 +190,40 @@ function buildShape(b: Building, r: Rotation): Shape {
   return { stoneA, stoneB, mansA, mansB, roof };
 }
 
-export function buildRotView(world: World, r: Rotation): RotView {
-  const depth = (x: number, y: number) => depthOf(r, x, y);
-
-  type Pending = { depth: number; item?: Item; tree?: number };
-  const pending: Pending[] = [];
+/** A view rotation's items, in steps (each `yield` is a chance to hand the page back). */
+function* rotViewSteps(world: World, r: Rotation): Generator<void, RotView> {
+  // Buildings and trees by depth band. Bands come out in order, so only each
+  // band's own buildings need sorting: one sort of all 250,000 took far longer.
+  const bands = new Map<number, { b: [number, BuildingItem][]; trees: number[] }>();
+  const band = (depth: number) => {
+    const k = Math.floor(depth / DEPTH_BAND);
+    let g = bands.get(k);
+    if (!g) bands.set(k, (g = { b: [], trees: [] }));
+    return g;
+  };
   const byBuilding = new Map<number, BuildingItem>();
-  world.buildings.forEach((b, i) => {
+  for (let i = 0; i < world.buildings.length; i++) {
+    const b = world.buildings[i];
     const item = new BuildingItem(i, buildingBox(b, r), b, r);
     byBuilding.set(i, item);
-    pending.push({ depth: depth(b.cx, b.cy), item });
-  });
-  for (let i = 0; i < world.trees.length / 2; i++) {
-    pending.push({ depth: depth(world.trees[i * 2], world.trees[i * 2 + 1]), tree: i });
+    const depth = depthOf(r, b.cx, b.cy);
+    band(depth).b.push([depth, item]);
+    if (i % 2048 === 2047) yield;
   }
-  pending.sort((p, q) => p.depth - q.depth);
+  for (let i = 0; i < world.trees.length / 2; i++) {
+    band(depthOf(r, world.trees[i * 2], world.trees[i * 2 + 1])).trees.push(i);
+    if (i % 16384 === 16383) yield;
+  }
 
   // Within each depth band draw buildings first, then that band's trees as a
   // single batch. Trees are small enough that the ordering error is invisible.
   const items: Item[] = [];
-  let i = 0;
-  while (i < pending.length) {
-    const band = Math.floor(pending[i].depth / DEPTH_BAND);
-    const trees: number[] = [];
-    while (i < pending.length && Math.floor(pending[i].depth / DEPTH_BAND) === band) {
-      const p = pending[i++];
-      if (p.item) items.push(p.item);
-      else trees.push(p.tree!);
-    }
+  let done = 0;
+  for (const k of [...bands.keys()].sort((p, q) => p - q)) {
+    const { b, trees } = bands.get(k)!;
+    b.sort((p, q) => p[0] - q[0]);
+    for (const [, item] of b) items.push(item);
+    if (++done % 64 === 0) yield;
     if (!trees.length) continue;
     const canopy = new Path2D();
     const light = new Path2D();
@@ -262,6 +268,24 @@ export function buildRotView(world: World, r: Rotation): RotView {
   }
 
   return { rotation: r, items, byBuilding, slabSides: { left, right } };
+}
+
+export function buildRotView(world: World, r: Rotation): RotView {
+  const steps = rotViewSteps(world, r);
+  for (;;) {
+    const step = steps.next();
+    if (step.done) return step.value;
+  }
+}
+
+/** buildRotView in slices: `pace` hands the page back whenever it's been 25 ms or so. */
+export async function buildRotViewPaced(world: World, r: Rotation, pace: () => Promise<void>): Promise<RotView> {
+  const steps = rotViewSteps(world, r);
+  for (;;) {
+    const step = steps.next();
+    if (step.done) return step.value;
+    await pace();
+  }
 }
 
 export interface Camera {
@@ -613,6 +637,79 @@ export function drawStructures(
     }
   }
   flush(Infinity);
+}
+
+/** The streets' glow at night, as paths in world metres: the big streets, and all the others. */
+export interface Glow {
+  major: Path2D;
+  minor: Path2D;
+}
+
+/**
+ * What shines at night, on a transparent canvas the same size and camera as
+ * the other snapshots, to be added over the darkened map: the street lamps'
+ * glow along every street, and, with `near`, lit windows and shopfronts. With
+ * `near` each building also hides the lights behind it, back to front; from
+ * afar that isn't worth 100,000 buildings.
+ */
+export function drawLights(ctx: CanvasRenderingContext2D, world: World, view: RotView, cam: Camera, res: number, glow: Glow, near: boolean) {
+  pass++;
+  const { width: cw, height: ch } = ctx.canvas;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, cw, ch);
+  const z = cam.zoom;
+  const { ox, oy, rect: [vx0, vy0, vx1, vy1] } = viewRect(ctx, cam);
+  const cssZoom = z / res;
+
+  groundTransform(ctx, view.rotation, z, ox, oy);
+  ctx.save();
+  ctx.clip(world.slab);
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  // Never thinner than a pixel or so, or the whole city's glow fades out from afar.
+  const px = res / z;
+  // Close up the lamps light the roadway softly; from afar they are all there is to see.
+  const k = Math.max(0.4, Math.min(1, 1.2 / cssZoom));
+  ctx.strokeStyle = `rgba(255, 176, 92, ${0.07 * k})`;
+  ctx.lineWidth = Math.max(26, 5 * px);
+  ctx.stroke(glow.major);
+  ctx.strokeStyle = `rgba(255, 196, 120, ${0.34 * k})`;
+  ctx.lineWidth = Math.max(9, 1.6 * px);
+  ctx.stroke(glow.major);
+  if (cssZoom >= 0.22) {
+    ctx.strokeStyle = `rgba(255, 190, 116, ${0.2 * k})`;
+    ctx.lineWidth = Math.max(5, 1 * px);
+    ctx.stroke(glow.minor);
+  }
+  ctx.restore();
+  if (!near) return;
+
+  ctx.setTransform(z, 0, 0, z, ox, oy);
+  const windows = cssZoom >= 1;
+  for (const it of view.items) {
+    const [x0, y0, x1, y1] = it.bbox;
+    if (x1 < vx0 || x0 > vx1 || y1 < vy0 || y0 > vy1) continue;
+    ctx.globalCompositeOperation = "destination-out";
+    ctx.fillStyle = "#000";
+    if (it.kind === "t") {
+      ctx.fill(it.canopy);
+      continue;
+    }
+    ctx.fill(it.stoneA);
+    ctx.fill(it.stoneB);
+    if (it.mansA) ctx.fill(it.mansA);
+    if (it.mansB) ctx.fill(it.mansB);
+    ctx.fill(it.roof);
+    if (!windows) continue;
+    if (it.detail === undefined) it.detail = buildDetail(world.buildings[it.idx], it.idx, view.rotation);
+    if (!it.detail) continue;
+    ctx.globalCompositeOperation = "source-over";
+    ctx.fillStyle = "rgba(255, 214, 130, 0.9)";
+    ctx.fill(it.detail.lit);
+    ctx.fillStyle = "rgba(255, 228, 170, 0.75)";
+    ctx.fill(it.detail.shop);
+  }
+  ctx.globalCompositeOperation = "source-over";
 }
 
 /** Drums and domes, back to front, shaded with a left-to-right gradient. */

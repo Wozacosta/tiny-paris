@@ -1,9 +1,13 @@
 import { inject } from "@vercel/analytics";
-import { loadFrame, loadTransit, loadWorld, pointInRing, type Building, type MapFrame, type World } from "./model";
+import { asset } from "./assets";
+import { loadFrame, loadStreets, loadTransit, loadWorld, pacer, pointInRing, type Building, type MapFrame, type World } from "./model";
 import { findAddresses, fold, queryWords, rank, type Address } from "./search";
 import { LANDMARKS, TOP, slug, type Landmark } from "./landmarks";
-import { buildRotView, drawGround, drawHighlight, drawSlab, drawStructures, isoToWorld, occluders, pick, worldToIso, type Camera, type Rotation, type RotView } from "./render";
-import { DAY, type Theme } from "./theme";
+import { buildRotView, buildRotViewPaced, drawGround, drawHighlight, drawLights, drawSlab, drawStructures, isoToWorld, occluders, pick, worldToIso, type Camera, type Glow, type Rotation, type RotView } from "./render";
+import { DAY, NIGHT, type Theme } from "./theme";
+import { ARRONDISSEMENTS, STREET_NAMES_ZOOM, drawStreetNames, streetNames, type StreetName } from "./labels";
+import { parisNight } from "./sun";
+import type { Box } from "./shapes";
 import { MOVERS_ZOOM } from "./streetlife";
 import { Traffic } from "./traffic";
 import { Sprites } from "./sprites";
@@ -31,13 +35,16 @@ const views: RotView[] = [];
 const rotation: Rotation = 3;
 let painted: PaintedLayer | null = null;
 let showPainted = true;
-const theme: Theme = DAY;
+/** Day or night: night when it's dark in Paris, unless the Night switch says otherwise. */
+let theme: Theme = DAY;
+const isNight = () => theme.name === "night";
 let res = 1;
 /** Camera with zoom in CSS pixels per iso unit; converted to canvas pixels on draw. */
 const cam: Camera = { cx: 0, cy: 0, zoom: 1 };
 const state = { hover: null as number | null, selected: null as number | null };
 let minZoom = 0.1;
-const MAX_ZOOM = 14;
+/** The painting has 2 pixels to the metre: much closer than this and it is all blur under sharp little cars. */
+const MAX_ZOOM = 6;
 /** Zoom from which movers are occluded building by building, in depth order. */
 const OCCLUDE_ZOOM = 2;
 
@@ -57,6 +64,36 @@ const moversCtx = movers.getContext("2d")!;
 const raisedLayer = document.createElement("canvas");
 const raisedCtx = raisedLayer.getContext("2d")!;
 const buildCtx = buildSnap.getContext("2d")!;
+// At night, a third snapshot: what shines (street lamps, windows), added over the darkened painting.
+const lightSnap = document.createElement("canvas");
+const lightCtx = lightSnap.getContext("2d")!;
+let glow: Glow | null = null;
+/** The streets as two paths for their glow, built the first night. */
+function nightGlow(): Glow {
+  if (glow) return glow;
+  glow = { major: new Path2D(), minor: new Path2D() };
+  for (const l of world.streets) {
+    if (l.kind === "cycleway" || l.kind === "service") continue;
+    const path = l.major ? glow.major : glow.minor;
+    path.moveTo(l.pts[0], l.pts[1]);
+    for (let i = 2; i < l.pts.length; i += 2) path.lineTo(l.pts[i], l.pts[i + 1]);
+  }
+  return glow;
+}
+
+/** Turns what's on a canvas into its night self: dimmed, then tinted blue. Only where something is drawn. */
+function dusk(g: CanvasRenderingContext2D, dim: number, tint: number) {
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.globalCompositeOperation = "source-atop";
+  g.fillStyle = `rgba(0, 0, 0, ${dim})`;
+  g.fillRect(0, 0, g.canvas.width, g.canvas.height);
+  g.fillStyle = `rgba(28, 44, 130, ${tint})`;
+  g.fillRect(0, 0, g.canvas.width, g.canvas.height);
+  g.globalCompositeOperation = "source-over";
+}
+
+/** Street names by where they are (see labels.ts), once the city is in. */
+let namesIn: ((box: Box) => StreetName[]) | null = null;
 const SNAP_MARGIN = 0.2;
 let snapCam: Camera | null = null;
 /** Snapshot pixels per canvas pixel: under the painting the vector map is hidden, so half will do. */
@@ -94,6 +131,8 @@ function frame() {
 /** True once the snapshot is too blurry or no longer covers the screen. */
 function snapshotStale(s: Camera) {
   if (needsBuildings(cam.zoom) !== needsBuildings(s.zoom)) return true;
+  // The night's lights are drawn differently from afar (see fullRender).
+  if (isNight() && cam.zoom >= MOVERS_ZOOM !== s.zoom >= MOVERS_ZOOM) return true;
   const k = cam.zoom / s.zoom;
   if (k > 1.8 || k < 0.75) return true;
   const dx = Math.abs(s.cx - cam.cx) * cam.zoom;
@@ -113,7 +152,8 @@ function fullRender() {
   snapScale = painted && showPainted ? 0.5 : 1;
   const w = Math.round(canvas.width * (1 + 2 * SNAP_MARGIN) * snapScale);
   const h = Math.round(canvas.height * (1 + 2 * SNAP_MARGIN) * snapScale);
-  for (const c of [groundSnap, buildSnap]) {
+  const lights = isNight() && !!painted && showPainted;
+  for (const c of lights ? [groundSnap, buildSnap, lightSnap] : [groundSnap, buildSnap]) {
     if (c.width !== w || c.height !== h) {
       c.width = w;
       c.height = h;
@@ -129,6 +169,7 @@ function fullRender() {
     buildCtx.setTransform(1, 0, 0, 1, 0, 0);
     buildCtx.clearRect(0, 0, w, h);
   }
+  if (lights) drawLights(lightCtx, world, view(), c, res * snapScale, nightGlow(), cam.zoom >= MOVERS_ZOOM);
   lastFullMs = performance.now() - t;
   snapCam = { ...cam };
 }
@@ -151,7 +192,15 @@ function present() {
   blit(ctx, groundSnap);
   // The painting covers every building; the layer still masks the movers below.
   if (!(painted && showPainted)) blit(ctx, buildSnap);
-  else painted.draw(ctx, { ...cam, zoom: z }, rotation);
+  else {
+    painted.draw(ctx, { ...cam, zoom: z }, rotation);
+    if (isNight()) {
+      dusk(ctx, 0.56, 0.3);
+      ctx.globalCompositeOperation = "lighter";
+      blit(ctx, lightSnap);
+      ctx.globalCompositeOperation = "source-over";
+    }
+  }
   traffic.showViaduct = !(painted && showPainted);
 
   // Moving things go on their own layer, cut away wherever the live building
@@ -169,6 +218,14 @@ function present() {
   const rect: [number, number, number, number] = [cam.cx - hw, cam.cy - hh, cam.cx + hw, cam.cy + hh];
   const overPainting = !!painted && showPainted;
   if (cam.zoom >= OCCLUDE_ZOOM) {
+    // Street names lie on the ground, under everything: every building in
+    // front of a street then hides its name, and the traffic drives over it.
+    if (showNames && cam.zoom >= STREET_NAMES_ZOOM && namesIn) {
+      const corners = [[rect[0], rect[1]], [rect[2], rect[1]], [rect[0], rect[3]], [rect[2], rect[3]]].map(([sx, sy]) => isoToWorld(rotation, sx, sy));
+      const xs = corners.map((p) => p[0]), ys = corners.map((p) => p[1]);
+      drawStreetNames(moversCtx, rotation, z, ox, oy, namesIn([Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]));
+      moversCtx.setTransform(z, 0, 0, z, ox, oy);
+    }
     // Close up, buildings and trees are sorted in with the movers, so each
     // hides only what is behind it.
     traffic.draw(moversCtx, rotation, rect, theme, cam.zoom, null, occluders(moversCtx, world, view(), rect, 0.6), overPainting);
@@ -193,6 +250,8 @@ function present() {
     moversCtx.setTransform(1, 0, 0, 1, 0, 0);
     moversCtx.drawImage(raisedLayer, 0, 0);
   }
+  // At night the vehicles dim with the city; their lights are bright enough to show through.
+  if (isNight() && overPainting) dusk(moversCtx, 0.3, 0.12);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.drawImage(movers, 0, 0);
   // The followed vehicle stays visible even behind buildings.
@@ -214,7 +273,10 @@ function present() {
 function preview() {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  if (painted && showPainted) painted.draw(ctx, { ...cam, zoom: cam.zoom * res }, rotation);
+  if (painted && showPainted) {
+    painted.draw(ctx, { ...cam, zoom: cam.zoom * res }, rotation);
+    if (isNight()) dusk(ctx, 0.56, 0.3);
+  }
   drawLabels();
 }
 
@@ -234,6 +296,26 @@ function drawLabels() {
   for (const l of showNames ? LANDMARKS : []) {
     const [x, y] = frame0.project(l.lon, l.lat);
     pin(x, y, l.top ?? 26, l.name.toUpperCase(), placed, theme.label, theme.labelText);
+  }
+  // From a little way up, the arrondissements, wherever the landmarks leave them room
+  // (the whole map at once is all landmarks: three numbers squeezed in between look lost).
+  if (showNames && cam.zoom >= 0.3 && cam.zoom < 1.1) {
+    ctx.font = `700 ${17 * res}px "Barlow Condensed", system-ui, sans-serif`;
+    ctx.lineJoin = "round";
+    for (const [name, lon, lat] of ARRONDISSEMENTS) {
+      const [ix, iy] = worldToIso(rotation, ...frame0.project(lon, lat));
+      const sx = (ix - cam.cx) * cam.zoom * res + canvas.width / 2, sy = (iy - cam.cy) * cam.zoom * res + canvas.height / 2;
+      const w = ctx.measureText(name).width + 10 * res, h = 20 * res;
+      const box: [number, number, number, number] = [sx - w / 2, sy - h / 2, sx + w / 2, sy + h / 2];
+      if (sx < 0 || sy < 0 || sx > canvas.width || sy > canvas.height) continue;
+      if (placed.some((p) => box[0] < p[2] + 4 && box[2] > p[0] - 4 && box[1] < p[3] + 4 && box[3] > p[1] - 4)) continue;
+      placed.push(box);
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
+      ctx.lineWidth = 3.5 * res;
+      ctx.strokeText(name, sx, sy);
+      ctx.fillStyle = DAY.label;
+      ctx.fillText(name, sx, sy);
+    }
   }
   ctx.letterSpacing = "0px";
 }
@@ -307,7 +389,7 @@ let followZoom: number | null = null;
 
 function follow(kind: "bus" | "velib" | "truck" | null) {
   if (!ready) return;
-  following = kind ? traffic.pickToFollow(kind, false) : null;
+  following = kind ? traffic.pickToFollow(kind, isNight()) : null;
   followZoom = following != null ? Math.max(cam.zoom, kind === "velib" ? 5 : 4) : null;
   if (following != null) flight++;
   for (const b of document.querySelectorAll<HTMLButtonElement>("[data-follow]")) {
@@ -444,6 +526,26 @@ function toggleNames() {
   requestPresent();
 }
 
+/** "on" or "off" once the Night switch has been used, for this visit; otherwise night follows the sun over Paris. */
+let nightChoice = sessionStorage.getItem("tp-night");
+
+function applyNight() {
+  const night = nightChoice ? nightChoice === "on" : parisNight(Date.now());
+  $("night").setAttribute("aria-pressed", String(night));
+  if (night === isNight()) return;
+  theme = night ? NIGHT : DAY;
+  document.body.classList.toggle("night", night);
+  // A followed day bus isn't running at night, nor a Noctilien by day.
+  if (following != null) follow(null);
+  requestRender();
+}
+
+function toggleNight() {
+  nightChoice = isNight() ? "off" : "on";
+  sessionStorage.setItem("tp-night", nightChoice);
+  applyNight();
+}
+
 function togglePainted() {
   showPainted = !showPainted;
   requestRender(); // the vector map underneath is drawn differently with and without it
@@ -455,6 +557,7 @@ function showInfo(i: number | null, addr?: string) {
   const card = $("info");
   if (i == null) {
     card.hidden = true;
+    showPicture(undefined);
     requestPresent();
     return;
   }
@@ -479,6 +582,7 @@ function showInfo(i: number | null, addr?: string) {
     a.textContent = "Wikipedia ↗";
     rows.push(["Read", a]);
   }
+  showPicture(t.wikipedia);
   const dl = $("info-body");
   dl.replaceChildren(
     ...rows.flatMap(([k, v]) => {
@@ -491,6 +595,28 @@ function showInfo(i: number | null, addr?: string) {
   );
   card.hidden = false;
   requestPresent();
+}
+
+/** The building card's photo: its Wikipedia article's lead picture, where it has one. */
+let pictureOf = "";
+function showPicture(article: string | undefined) {
+  const img = $<HTMLImageElement>("info-img");
+  if (article === pictureOf) return;
+  pictureOf = article ?? "";
+  img.hidden = true;
+  img.removeAttribute("src");
+  if (!article) return;
+  const [lang, ...rest] = article.split(":");
+  const title = (rest.length ? rest.join(":") : lang).replace(/ /g, "_");
+  fetch(`https://${rest.length ? lang : "fr"}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`)
+    .then((r) => (r.ok ? r.json() : null))
+    .then((page: { thumbnail?: { source: string; width: number; height: number } } | null) => {
+      // Another building may have been opened meanwhile.
+      if (pictureOf !== article || !page?.thumbnail) return;
+      img.onload = () => (img.hidden = false);
+      img.src = page.thumbnail.source;
+    })
+    .catch(() => {});
 }
 
 /** What a report is about: a building, or wherever the view is. */
@@ -634,6 +760,7 @@ function setupInput() {
     else if (k === "a" && import.meta.env.DEV) togglePainted();
     else if (k === "w") wander();
     else if (k === "n") toggleNames();
+    else if (k === "l") toggleNight();
     else if (k === "h") {
       follow(null);
       flyTo(fitBounds());
@@ -646,6 +773,7 @@ function setupInput() {
 
   $("names").setAttribute("aria-pressed", String(showNames));
   $("names").onclick = toggleNames;
+  $("night").onclick = toggleNight;
   $("zoom-in").onclick = () => glideZoom(1.5);
   $("zoom-out").onclick = () => glideZoom(1 / 1.5);
   $("home").onclick = () => {
@@ -823,7 +951,7 @@ function setupLine() {
     const btn = document.createElement("button");
     btn.dataset.name = l.name;
     const img = document.createElement("img");
-    Object.assign(img, { src: `/thumbs/${slug(l.name)}.webp`, alt: "", width: 104, height: 70, decoding: "async" });
+    Object.assign(img, { src: asset(`/thumbs/${slug(l.name)}.webp`), alt: "", width: 104, height: 70, decoding: "async" });
     const name = document.createElement("span");
     name.textContent = l.name;
     btn.append(img, name);
@@ -877,7 +1005,9 @@ inject();
 async function main() {
   // The painting first: its manifest and the outline are a few kB, so the map
   // shows in a second; the city's data (13 MB) follows for traffic and clicks.
-  [frame0, painted] = await Promise.all([loadFrame("/data/paris-meta.json"), PaintedLayer.load(() => requestPresent())]);
+  [frame0, painted] = await Promise.all([loadFrame(asset("/data/paris-meta.json")), PaintedLayer.load(() => requestPresent())]);
+  applyNight();
+  setInterval(applyNight, 60_000);
   resize();
   Object.assign(cam, startView());
   setupInput();
@@ -892,17 +1022,24 @@ async function main() {
     showLoading(null);
   }
 
+  // One-way streets, names, lights and stops: small, and both loaders want it.
+  const streets = loadStreets(asset("/data/paris-streets.json"));
   const [w, transit, pois] = await Promise.all([
-    loadWorld("/data/paris.bin", (f) => (painted ? showStreets(f) : showLoading(f))),
-    loadTransit("/data/paris-transit.json"),
-    fetch("/data/paris-pois.json").then((r) => (r.ok ? r.json() : { cafes: [] })).catch(() => ({ cafes: [] })),
+    streets.then((st) => loadWorld(asset("/data/paris.bin"), (f) => (painted ? showStreets(f) : showLoading(f)), st)),
+    streets.then((st) => loadTransit(asset("/data/paris-transit.json"), st)),
+    fetch(asset("/data/paris-pois.json")).then((r) => (r.ok ? r.json() : { cafes: [] })).catch(() => ({ cafes: [] })),
   ]);
   transit.cafes = (pois.cafes as [number, number, number, number][]).map(([x, y, kind, out]) => [x / 10, y / 10, kind, out]);
   world = w;
   if (new URLSearchParams(location.search).has("export")) installExport(world);
   showStreets(2);
   await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
+  // What's left is a second of work on a phone: in slices, so the map never freezes.
+  const pace = pacer();
   traffic = new Traffic(world, transit);
+  await traffic.build(pace);
+  views[rotation] = await buildRotViewPaced(world, rotation, pace);
+  namesIn = streetNames(world);
   Sprites.load().then((sp) => traffic.setSprites(sp));
   const n = traffic.count;
   const fmt = (v: number) => v.toLocaleString("en");

@@ -64,6 +64,28 @@ test("the Names switch hides place names and is remembered", async ({ page }) =>
   await expect(page.locator("#names")).toHaveAttribute("aria-pressed", "false");
 });
 
+test("the Night switch darkens the map and lights it back", async ({ page }) => {
+  await open(page);
+  const night = page.locator("#night");
+  // It starts by the sun over Paris: either way, the switch turns it over, and back.
+  const was = await night.getAttribute("aria-pressed");
+  await night.click();
+  await expect(night).toHaveAttribute("aria-pressed", was === "true" ? "false" : "true");
+  await expect(page.locator("body")).toHaveClass(was === "true" ? "" : "night");
+  await expect.poll(() => drawn(page)).toBeGreaterThan(0.2);
+  await night.click();
+  await expect(night).toHaveAttribute("aria-pressed", was!);
+});
+
+test("the big files are asked for by their hash, to be cached for good", async ({ page }) => {
+  const asked: string[] = [];
+  page.on("request", (r) => asked.push(r.url()));
+  await open(page);
+  const big = asked.filter((u) => /\/(data|painted|sprites|thumbs)\//.test(u));
+  expect(big.length).toBeGreaterThan(5);
+  for (const u of big) expect(u).toMatch(/\?v=[0-9a-f]{10}$/);
+});
+
 test("a problem can be reported", async ({ page }) => {
   await open(page);
   let sent: Record<string, unknown> | null = null;

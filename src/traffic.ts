@@ -4,11 +4,12 @@
 // It is drawn live every frame between the ground and the buildings, so
 // buildings in front hide whatever is behind them for free.
 
-import { BIKE_ROADS, CAR_ROADS, TRUCK_ROADS, type Lane, type Transit, type World } from "./model";
-import { depthOf, worldToIso, type Occluder, type Rotation } from "./render";
+import { BIKE_ROADS, CAR_ROADS, LIGHT_CYCLE, TRUCK_ROADS, type Lane, type Transit, type World } from "./model";
+import { depthOf, isoToWorld, worldToIso, type Occluder, type Rotation } from "./render";
 import { Life } from "./life";
 import { MOVERS_ZOOM, PEOPLE_ZOOM } from "./streetlife";
-import { box, dot, groundShadow, person, sample, shade, SHIRTS, SKINS, type Sample } from "./shapes";
+import { box, boxInView, dot, groundShadow, laneBoxes, person, sample, shade, SHIRTS, SKINS, type Box, type Sample } from "./shapes";
+import type { Theme } from "./theme";
 import type { Sprites } from "./sprites";
 import { drawTrackPiece, pieceDepth, trackPieces, type TrackPiece, type TrackStyle } from "./tracks";
 
@@ -20,7 +21,6 @@ const CAR_SPRITES = [
 ];
 /** Zoom (CSS px per metre) above which sprites replace the simple boxes. */
 const SPRITE_ZOOM = 1.1;
-import type { Theme } from "./theme";
 
 const CAR = 0, BUS = 1, TRAIN = 2, BIKE = 3, TRUCK = 4;
 type Kind = typeof CAR | typeof BUS | typeof TRAIN | typeof BIKE | typeof TRUCK;
@@ -37,6 +37,25 @@ interface Vehicle {
   wait: number;
   /** Distance left until the next stop. */
   until: number;
+  /** 0 to 1: pulling away after a stop, a red light or a queue. */
+  ramp: number;
+  /** Metres free ahead before the vehicle in front, worked out each step. */
+  room: number;
+  /** Which of a wide one-way street's two lanes it keeps to. */
+  sub: 0 | 1;
+  /** Near enough to the view to bother with queues and red lights (see Traffic.near). */
+  close: boolean;
+}
+
+/** Metres from nose to tail, for keeping a gap. */
+const LENGTH = [4.4, 12, 76, 1.8, 8];
+/** A red light is waited for this far before its node: the middle of the crossing. */
+const STOP_LINE = 7;
+
+/** The first of the sorted distances `at` beyond `s`, or -1. */
+function nextAfter(at: Float64Array, s: number) {
+  for (let i = 0; i < at.length; i++) if (at[i] > s) return i;
+  return -1;
 }
 
 const TRAIN_CARS = 5;
@@ -82,6 +101,20 @@ export class Traffic {
   private sprites: Sprites | null = null;
   /** Set for the current draw call: sprites are ready and we're zoomed in enough. */
   private useSprites = false;
+  /** Bounding boxes of the lanes, to skip what's far from the view without sampling it. */
+  private streetBox: Float32Array;
+  private busBox: Float32Array;
+  private metroBox: Float32Array;
+  /** Whether the bus lines know their stops; without them buses pull in every few hundred metres. */
+  private busStops = false;
+  /** Picks a random street for a kind of vehicle, weighted by length. */
+  private pickers: Partial<Record<Kind, () => number>> = {};
+  /** Per street, direction and lane: the first vehicle on it, and for each vehicle the next (see findRoom). */
+  private first: Int32Array;
+  private nextOn = new Int32Array(0);
+  /** The view on the ground when last drawn, and a few streets around it; and when `close` was last worked out. */
+  private near: Box | null = null;
+  private nearAt = -1;
 
   setSprites(s: Sprites) {
     this.sprites = s;
@@ -92,7 +125,8 @@ export class Traffic {
     this.life = new Life(world, transit);
     const { streets, metro } = world;
     const rand = (n: number) => Math.floor(Math.random() * n);
-    const add = (v: Omit<Vehicle, "wait" | "until"> & Partial<Vehicle>) => this.vehicles.push({ wait: 0, until: 30 + Math.random() * 300, ...v });
+    const add = (v: Omit<Vehicle, "wait" | "until" | "ramp" | "room" | "sub" | "close"> & Partial<Vehicle>) =>
+      this.vehicles.push({ wait: 0, until: 30 + Math.random() * 300, ramp: 1, room: Infinity, sub: Math.random() < 0.5 ? 0 : 1, close: true, ...v });
 
     // Pick street lanes of the allowed classes, weighted by length.
     const picker = (allowed: Set<string>) => {
@@ -112,10 +146,12 @@ export class Traffic {
       };
       return { pick, total };
     };
+    // Along a one-way street, the way it goes; bikes ride both ways, as Paris lets them.
     const spawnOn = (kind: Kind, lane: number, speed: number, color: number) =>
-      add({ kind, lane, s: Math.random() * streets[lane].len, dir: Math.random() < 0.5 ? 1 : -1, speed, color });
+      add({ kind, lane, s: Math.random() * streets[lane].len, dir: (kind !== BIKE && streets[lane].oneway) || (Math.random() < 0.5 ? 1 : -1), speed, color });
 
     const cars = picker(CAR_ROADS);
+    this.pickers[CAR] = cars.pick;
     for (let i = 0, n = Math.min(9000, Math.round(cars.total / 40)); i < n; i++) spawnOn(CAR, cars.pick(), 6 + Math.random() * 6, rand(64));
 
     const bikes = picker(BIKE_ROADS);
@@ -127,6 +163,7 @@ export class Traffic {
     }
 
     const trucks = picker(TRUCK_ROADS);
+    this.pickers[TRUCK] = trucks.pick;
     for (let i = 0, n = Math.round(trucks.total / 3000); i < n; i++) spawnOn(TRUCK, trucks.pick(), 2.8, 0);
 
     // RATP buses follow their real line; without line data, the main roads.
@@ -143,8 +180,10 @@ export class Traffic {
         add({ kind: BUS, lane: seg, s: Math.random() * this.busSegs[seg].len, dir: 1, speed: 6, color: li });
       }
     });
+    this.busStops = this.busSegs.some((l) => l.stops);
     if (!transit.lines.length) {
       const majors = picker(new Set(["primary", "secondary", "tertiary"]));
+      this.pickers[BUS] = majors.pick;
       for (let i = 0, n = Math.round(majors.total / 450); i < n; i++) spawnOn(BUS, majors.pick(), 5.5, -1);
     }
 
@@ -153,8 +192,20 @@ export class Traffic {
     });
 
     this.track = trackPieces(metro, 8, PILLAR_EVERY);
+    this.streetBox = laneBoxes(streets);
+    this.busBox = laneBoxes(this.busSegs);
+    this.metroBox = laneBoxes(metro);
+    this.first = new Int32Array(streets.length * 4);
 
-    this.stations = transit.velib.map((v, i) => this.placeStation(v.x, v.y, v.capacity, i));
+  }
+
+  /** The slow part of setting up, in slices so the map stays live meanwhile: the Vélib' stations, then everyone on foot. */
+  async build(pace: () => Promise<void>) {
+    for (const [i, v] of this.transit.velib.entries()) {
+      if (i % 64 === 0) await pace();
+      this.stations.push(this.placeStation(v.x, v.y, v.capacity, i));
+    }
+    await this.life.build(pace);
   }
 
   /** Lines a station up with the nearest street, along the pavement. */
@@ -260,22 +311,121 @@ export class Traffic {
     return c;
   }
 
+  /**
+   * How far each vehicle can go before the one in front: cars, trucks and
+   * buses on the same street, going the same way in the same lane, queue
+   * rather than drive through each other.
+   */
+  private findRoom() {
+    const { streets } = this.world;
+    const vs = this.vehicles, first = this.first.fill(-1);
+    if (this.nextOn.length < vs.length) this.nextOn = new Int32Array(vs.length);
+    const next = this.nextOn, shared: number[] = [];
+    for (let i = 0; i < vs.length; i++) {
+      const v = vs[i];
+      v.room = Infinity;
+      if (!v.close || v.kind === BIKE || v.kind === TRAIN || (v.kind === BUS && v.color >= 0)) continue;
+      const key = v.lane * 4 + (v.dir === 1 ? 2 : 0) + this.subLane(streets[v.lane], v);
+      next[i] = first[key];
+      first[key] = i;
+      if (next[i] >= 0) shared.push(key);
+    }
+    const row: Vehicle[] = [];
+    for (const key of shared) {
+      row.length = 0;
+      for (let i = first[key]; i >= 0; i = next[i]) row.push(vs[i]);
+      first[key] = -1; // a key comes up once per extra vehicle: the first time does them all
+      if (row.length < 2) continue;
+      const dir = row[0].dir;
+      row.sort((a, b) => (b.s - a.s) * dir);
+      for (let k = 1; k < row.length; k++) {
+        row[k].room = Math.max(0, (row[k - 1].s - row[k].s) * dir - (LENGTH[row[k - 1].kind] + LENGTH[row[k].kind]) / 2 - 1.5);
+      }
+    }
+  }
+
+  /** A wide one-way street has two lanes abreast; everything else, one each way. */
+  private subLane(l: Lane, v: Vehicle) {
+    return l.oneway && l.half >= 5 ? v.sub : 0;
+  }
+
+  /** Where a vehicle at `s` going `d` further must wait for a red light, if anywhere. */
+  private redAhead(l: Lane, s: number, dir: 1 | -1, d: number): number | null {
+    const g = l.lights!;
+    for (let i = 0; i < g.length; i += 3) {
+      const line = g[i] - dir * STOP_LINE;
+      if (line < 0 || line > l.len || (s - line) * dir > 0 || (s + dir * d - line) * dir <= 0) continue;
+      // Each half of the cycle is green for the streets running one way, red for those across.
+      if ((this.time + g[i + 1]) % LIGHT_CYCLE < LIGHT_CYCLE / 2 !== (g[i + 2] === 1)) return line;
+    }
+    return null;
+  }
+
+  /** Somewhere else on the map: for a vehicle whose one-way street ends at the map's edge. */
+  private respawn(v: Vehicle) {
+    const lane = this.pickers[v.kind]?.();
+    if (lane == null) return;
+    const l = this.world.streets[lane];
+    Object.assign(v, { lane, s: Math.random() * l.len, dir: l.oneway || (Math.random() < 0.5 ? 1 : -1), ramp: 1 });
+  }
+
   /** `zoom`: the camera's; below MOVERS_ZOOM nothing is visible, so nothing moves. */
   step(dt: number, zoom: number) {
     this.time += dt;
     this.life.step(dt, zoom);
     if (zoom < MOVERS_ZOOM) return;
     const { streets, junctions, metro } = this.world;
+    // Twice a second: which vehicles are near the view. Only they queue and wait
+    // at lights; the 13,000 others just keep going, which costs next to nothing.
+    if (this.near && this.time - this.nearAt > 0.5) {
+      this.nearAt = this.time;
+      for (const v of this.vehicles) {
+        v.close = v.kind === TRAIN || boxInView(v.kind === BUS && v.color >= 0 ? this.busBox : this.streetBox, v.lane, this.near);
+      }
+    }
+    this.findRoom();
     for (const v of this.vehicles) {
       if (v.wait > 0) {
         v.wait -= dt;
+        if (v.wait <= 0) v.ramp = 0;
         continue;
       }
-      const d = v.speed * dt;
+      if (v.ramp < 1) v.ramp = Math.min(1, v.ramp + dt / (v.kind === TRAIN ? 6 : 2.5));
+      const onLine = v.kind === BUS && v.color >= 0;
+      const lane = v.kind === TRAIN ? metro[v.lane] : onLine ? this.busSegs[v.lane] : streets[v.lane];
+      let d = v.speed * (0.25 + 0.75 * v.ramp) * dt;
+
+      // Trains stop at their stations and buses at their stops: brake into them, then wait.
+      if (lane.stops && (v.kind === TRAIN || onLine)) {
+        // The stop is where the middle of a train goes, and the front door of a bus.
+        const lead = v.kind === TRAIN ? (TRAIN_CARS * TRAIN_CAR_LEN) / 2 : 5;
+        const i = nextAfter(lane.stops, v.s - lead);
+        if (i >= 0) {
+          const gap = lane.stops[i] - (v.s - lead), brake = v.kind === TRAIN ? 80 : 25;
+          if (gap < brake) d *= Math.max(0.2, gap / brake);
+          if (d >= gap) {
+            v.s = lane.stops[i] + lead + 0.01;
+            v.wait = v.kind === TRAIN ? 14 + Math.random() * 6 : 7 + Math.random() * 7;
+            continue;
+          }
+        }
+      }
+      if (lane.lights && v.close && v.kind !== BIKE && v.kind !== TRAIN) {
+        const line = this.redAhead(lane, v.s, v.dir, d);
+        if (line != null) {
+          v.s = line;
+          v.ramp = 0;
+          continue;
+        }
+      }
+      if (d > v.room) {
+        d = v.room;
+        v.ramp = Math.min(v.ramp, 0.3);
+      }
       v.s += v.dir * d;
 
-      // Buses pull in at stops, trucks at every few bins.
-      if (v.kind === BUS || v.kind === TRUCK) {
+      // Trucks stop at every few bins; buses that don't know their stops, every few hundred metres.
+      if (v.kind === TRUCK || (v.kind === BUS && !(onLine && this.busStops))) {
         v.until -= d;
         if (v.until <= 0) {
           v.wait = v.kind === BUS ? 6 + Math.random() * 6 : 3 + Math.random() * 4;
@@ -285,28 +435,33 @@ export class Traffic {
 
       if (v.kind === TRAIN) {
         // Tracks are one-way chains; trains loop back through the tunnel.
-        if (v.s > metro[v.lane].len + TRAIN_CARS * TRAIN_CAR_LEN) v.s = 0;
+        if (v.s > lane.len + TRAIN_CARS * TRAIN_CAR_LEN) v.s = 0;
         continue;
       }
-      if (v.kind === BUS && v.color >= 0) {
+      if (onLine) {
         // Along the line, stretch after stretch, round and round.
-        const seg = this.busSegs[v.lane];
-        if (v.s > seg.len) {
+        if (v.s > lane.len) {
           v.lane = this.busNext[v.lane];
           v.s = 0;
         }
         continue;
       }
 
-      const lane = streets[v.lane];
       if (v.s >= 0 && v.s <= lane.len) continue;
       const allowed = v.kind === BIKE ? BIKE_ROADS : v.kind === TRUCK ? TRUCK_ROADS : CAR_ROADS;
       const over = v.s < 0 ? -v.s : v.s - lane.len;
       const end = v.s < 0 ? lane.a : lane.b;
-      const all = (junctions.get(end) ?? []).filter((i) => i !== v.lane && allowed.has(streets[i].kind));
+      // Not the wrong way up a one-way street (bikes may).
+      const legal = (l: Lane) => v.kind === BIKE || !l.oneway || (l.oneway === 1 ? l.a === end : l.b === end);
+      const all = (junctions.get(end) ?? []).filter((i) => i !== v.lane && allowed.has(streets[i].kind) && legal(streets[i]));
       const majors = v.kind === BUS ? all.filter((i) => streets[i].major) : all;
       const opts = majors.length ? majors : all;
       if (!opts.length) {
+        if (lane.oneway && v.kind !== BIKE) {
+          // The end of a one-way street with no way on: it has left the map.
+          this.respawn(v);
+          continue;
+        }
         // Dead end: turn around.
         v.dir = v.dir === 1 ? -1 : 1;
         v.s = v.s < 0 ? over : lane.len - over;
@@ -315,7 +470,7 @@ export class Traffic {
       const next = opts[Math.floor(Math.random() * opts.length)];
       const nl = streets[next];
       v.lane = next;
-      if (nl.a === end) {
+      if (nl.a === end && !(nl.oneway === -1 && nl.b === end && v.kind !== BIKE)) {
         v.dir = 1;
         v.s = Math.min(over, nl.len);
       } else {
@@ -341,6 +496,14 @@ export class Traffic {
     const night = theme.name === "night";
     const items: { depth: number; draw: () => void }[] = [];
     this.useSprites = !!this.sprites && cssZoom >= SPRITE_ZOOM;
+    // The view on the ground, in world metres, with room for what stands tall.
+    const wb: Box = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const [sx, sy] of [[x0, y0], [x1, y0], [x0, y1], [x1, y1]]) {
+      const [wx, wy] = isoToWorld(r, sx, sy);
+      wb[0] = Math.min(wb[0], wx - 40); wb[1] = Math.min(wb[1], wy - 40);
+      wb[2] = Math.max(wb[2], wx + 40); wb[3] = Math.max(wb[3], wy + 40);
+    }
+    if (only == null) this.near = [wb[0] - 300, wb[1] - 300, wb[2] + 300, wb[3] + 300];
 
     const trackStyle = night ? TRACK_NIGHT : TRACK_DAY;
     for (const p of only == null && this.showViaduct ? this.track : []) {
@@ -361,6 +524,7 @@ export class Traffic {
       const small = cssZoom >= PEOPLE_ZOOM; // bikes and people only once they're visible
       for (const v of only == null ? this.vehicles : [this.vehicles[only]]) {
         if (v.kind === TRAIN) {
+          if (only == null && !boxInView(this.metroBox, v.lane, wb)) continue;
           const l = metro[v.lane];
           for (let k = 0; k < TRAIN_CARS; k++) {
             const s = v.s - k * (TRAIN_CAR_LEN + TRAIN_GAP) - TRAIN_CAR_LEN / 2;
@@ -378,6 +542,7 @@ export class Traffic {
         if (v.kind === BUS && v.color >= 0) {
           const line = this.transit.lines[this.busLine[v.lane]];
           if (line.night !== night) continue; // Noctilien at night, day lines by day
+          if (only == null && !boxInView(this.busBox, v.lane, wb)) continue;
           const p = sample(this.busSegs[v.lane], v.s);
           // Line ways run down the street's middle; keep to the right of it.
           const x = p.x - p.ty * 2.2, y = p.y + p.tx * 2.2;
@@ -385,11 +550,15 @@ export class Traffic {
           items.push({ depth: depthOf(r, x, y), draw: () => this.drawBus(ctx, r, x, y, p.tx, p.ty, line.colour, theme) });
           continue;
         }
+        if (only == null && !boxInView(this.streetBox, v.lane, wb)) continue;
         const l = streets[v.lane];
         const p = sample(l, v.s);
         const tx = p.tx * v.dir, ty = p.ty * v.dir;
         // Keep right: offset towards the right-hand side of travel (y points south).
-        const off = v.kind === BIKE ? Math.max(0.6, l.half - 1) : Math.min(l.half * 0.5, 3);
+        // A one-way street is all theirs: down its middle, or two abreast if it's wide.
+        const off = v.kind === BIKE ? Math.max(0.6, l.half - 1)
+          : !l.oneway ? Math.min(l.half * 0.5, 3)
+          : l.half >= 5 ? (v.sub ? 1 : -1) * l.half * 0.4 : 0;
         const x = p.x - ty * off, y = p.y + tx * off;
         if (!inView(x, y, 0, 15)) continue;
         const depth = depthOf(r, x, y);
@@ -400,7 +569,7 @@ export class Traffic {
       }
     }
 
-    if (only == null) this.life.collect(items, ctx, r, inView, theme, cssZoom);
+    if (only == null) this.life.collect(items, ctx, r, inView, theme, cssZoom, wb);
     items.push(...occluders);
     items.sort((a, b) => a.depth - b.depth);
     for (const it of items) it.draw();
